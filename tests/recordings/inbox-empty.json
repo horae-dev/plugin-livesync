@@ -1,0 +1,13 @@
+{
+  "tool": "livesync.inbox",
+  "params": {
+    "folder": "empty"
+  },
+  "expect": {
+    "data": {
+      "folder": "empty",
+      "messages": []
+    },
+    "intents": []
+  }
+}
