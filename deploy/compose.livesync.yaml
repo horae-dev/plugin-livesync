@@ -1,0 +1,62 @@
+# The LiveSync sidecar next to Horae: an override for the core's deploy/compose stack.
+#
+#   docker compose -f docker-compose.yaml -f compose.livesync.yaml up -d
+#
+# It adds the `livesync` service (the official Self-hosted LiveSync CLI in daemon mode,
+# supervised by horae-livesync) and gives `horae` the vault folder it mirrors (/vault) and its
+# status (/livesync-status, read-only). Then, in horae.lock: plugin-obsidian's paths.write is
+# /vault and plugin-livesync's paths.read is /livesync-status. README "Deploying".
+#
+# Needed in .env: HORAE_LIVESYNC_CONFIG (the livesync.yaml file), HORAE_SECRETS_DIR (already
+# used by the core: the two secret files below live there, readable by uid 10001).
+services:
+  livesync:
+    # No published image yet: built from this repository at a commit you pin (README).
+    image: "horae-livesync:${HORAE_LIVESYNC_REF:-main}"
+    build:
+      context: "https://github.com/horae-dev/plugin-livesync.git#${HORAE_LIVESYNC_REF:-main}"
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    # The rendered CLI settings (credentials, passphrase) live here, 0600: memory only.
+    tmpfs:
+      - "/tmp:size=64m,noexec,nosuid,nodev"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    stop_grace_period: 30s
+    environment:
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - "${HORAE_LIVESYNC_CONFIG:?set HORAE_LIVESYNC_CONFIG to your livesync.yaml}:/config/livesync.yaml:ro"
+      - livesync-db:/livesync
+      - livesync-vault:/vault
+      - livesync-status:/status
+    # Only the two secrets it needs, at /run/secrets/<NAME> (never the whole secrets dir).
+    secrets:
+      - LIVESYNC_COUCHDB_PASSWORD
+      - LIVESYNC_E2EE_PASSPHRASE
+
+  horae:
+    # The sidecar first, so that the new volumes are created with its owner (10001, 0700).
+    depends_on:
+      livesync:
+        condition: service_started
+    volumes:
+      - livesync-vault:/vault
+      - livesync-status:/livesync-status:ro
+
+secrets:
+  LIVESYNC_COUCHDB_PASSWORD:
+    file: "${HORAE_SECRETS_DIR:?}/LIVESYNC_COUCHDB_PASSWORD"
+  LIVESYNC_E2EE_PASSPHRASE:
+    file: "${HORAE_SECRETS_DIR:?}/LIVESYNC_E2EE_PASSPHRASE"
+
+volumes:
+  # The CLI's local PouchDB: keep it (a lost one means a full fetch from CouchDB).
+  livesync-db:
+  # The vault as plain files: in the backup set (PLAN §7), snapshots are #4.
+  livesync-vault:
+  livesync-status:

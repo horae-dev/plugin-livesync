@@ -82,6 +82,30 @@ jobs:
       # [tool.coverage.report] in pyproject.toml.
       - run: uv run pytest --cov --cov-report=term-missing
 
+  integration:
+    name: Integration (sidecar image + CouchDB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          cache-python: true
+      - run: uv sync
+      # The image as it ships (Dockerfile: the official LiveSync CLI pinned by digest); nothing
+      # is pushed.
+      - name: Build the sidecar image
+        run: docker build -t horae-livesync:test .
+      # The tests start a CouchDB container (pinned by digest), the sidecar and a second
+      # LiveSync client on a private Docker network, all with synthetic credentials.
+      - name: Two-way sync against a real CouchDB
+        env:
+          HORAE_LIVESYNC_IMAGE: horae-livesync:test
+        run: uv run pytest -m integration -v
+
   gitleaks:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
@@ -113,7 +137,7 @@ jobs:
   ci-ok:
     name: CI OK
     if: ${{ always() }}
-    needs: [lock, lint, types, test, gitleaks]
+    needs: [lock, lint, types, test, integration, gitleaks]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

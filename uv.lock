@@ -425,6 +425,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "horae-sdk" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -438,7 +439,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "horae-sdk", git = "https://github.com/horae-dev/horae?subdirectory=sdk&branch=main" }]
+requires-dist = [
+    { name = "horae-sdk", git = "https://github.com/horae-dev/horae?subdirectory=sdk&branch=main" },
+    { name = "pyyaml", specifier = ">=6" },
+]
 
 [package.metadata.requires-dev]
 dev = [

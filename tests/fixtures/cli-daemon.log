@@ -1,0 +1,220 @@
+Self-hosted LiveSync CLI
+Database Path: /data
+Vault Path:    /vault
+Settings: /tmp/livesync-x/settings.json
+
+[Starting] Initializing LiveSync...
+(Info) [ModuleLiveSyncMain]  Loading plugin...
+(Info) [ModuleLiveSyncMain]  Self-hosted LiveSync v1.0.46 1.0.46
+[Settings] Loaded from /tmp/livesync-x/settings.json
+(Notice) Migrating existing remote configuration to sls+ format...
+(Notice) Legacy remote configuration has been migrated to the remote configuration list.
+(Verbose) [SettingService]  Active remote configuration 'legacy-couchdb' has been activated.
+[Settings] Prepared an update for /tmp/livesync-x/settings.json
+(Info) [LiveSyncManagers]  Creating LiveSync Managers...
+(Info) [LiveSyncManagers]  LiveSync Managers have been created
+(Info) [LiveSyncLocalDB]  Opening Database...
+(Verbose) [LiveSyncLocalDB]  Database info
+(Verbose) [LiveSyncLocalDB]  {
+  "doc_count": 0,
+  "update_seq": 0,
+  "backend_adapter": "LevelDOWN",
+  "db_name": "headless-vault-livesync-v2",
+  "auto_compaction": false,
+  "adapter": "leveldb"
+}
+(Verbose) [LiveSyncManagers]  Initialising LiveSync Managers...
+(Info) [LiveSyncManagers]  LiveSync Manager has been initialised
+(Info) [LiveSyncLocalDB]  Database is now ready.
+(Verbose) [SF:OfflineScanner]  Opening the key-value database
+(Info) [SF:OfflineScanner]  Initialize and checking database files
+(Info) [SF:OfflineScanner]  Checking deleted files
+(Verbose) [SF:OfflineScanner]  Collecting local files on the storage
+(debug) [SFTargetFilter]  File is not duplicated: welcome.md
+(debug) [SFTargetFilter]  File is target by local DB: welcome.md
+(debug) [SFTargetFilter]  File is target finally: welcome.md
+(Verbose) [SF:OfflineScanner]  Collecting local files on the DB
+(Verbose) [SF:OfflineScanner]  Total files to synchronise: 1
+(debug) [SFTargetFilter]  File is not duplicated: welcome.md
+(debug) [SFTargetFilter]  File is target by local DB: welcome.md
+(debug) [SFTargetFilter]  File is target finally: welcome.md
+(debug) [SFTargetFilter]  File is not duplicated: welcome.md
+(debug) [SFTargetFilter]  File is target by local DB: welcome.md
+(debug) [SFTargetFilter]  File is target finally: welcome.md
+(debug) [SFTargetFilter]  File is not duplicated: welcome.md
+(debug) [SFTargetFilter]  File is target by local DB: welcome.md
+(debug) [SFTargetFilter]  File is target finally: welcome.md
+(debug) [SFTargetFilter]  File is not duplicated: welcome.md
+(debug) [SFTargetFilter]  File is target by local DB: welcome.md
+(debug) [SFTargetFilter]  File is target finally: welcome.md
+(Info) [ServiceDatabaseFileAccessCLI]  STORAGE -> DB (plain) welcome.md
+(Info) [SF:OfflineScanner]  Synchronisation completed: 1 files processed (1 completed, 0 skipped, 0 failed)
+(Info) [SF:OfflineScanner]  Initialized, NOW TRACKING!
+(Verbose) [ModuleLiveSyncMain]  Additional safety scan...
+(Verbose) [ModuleLiveSyncMain]  Additional safety scan completed
+[Ready] LiveSync is running
+[Ready] Press Ctrl+C to stop
+
+[Info] LiveSync is configured and ready
+[Info] Database: http://couchdb:5984/notes
+
+[Settings] Prepared an update for /tmp/livesync-x/settings.json
+[Daemon] Replicating with remote...
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 404
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 404
+(Verbose) [RemoteService]  Just checkpoint or some server information has been missing. The 404 error shown above is not an error.
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 404
+(Verbose) [RemoteService]  Just checkpoint or some server information has been missing. The 404 error shown above is not an error.
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 404
+(Verbose) [RemoteService]  Just checkpoint or some server information has been missing. The 404 error shown above is not an error.
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/obsydian_livesync_version -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsydian_livesync_milestone -> 404
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/obsydian_livesync_milestone -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/obsydian_livesync_version -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 404
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_revs_diff -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_bulk_get -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 404
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_bulk_docs -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 404
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 201
+[Daemon] Initial replication complete
+[Daemon] LiveSync mode: restoring sync settings and starting continuous synchronisation where supported
+[Settings] Prepared an update for /tmp/livesync-x/settings.json
+[Settings] Prepared an update for /tmp/livesync-x/settings.json
+[Daemon] LiveSync active
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsidian_livesync_sync_parameters -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/f%3A901ad9d5684637e4177815944bff501e04571629b1f7c9c265cd476b2ed868c3 -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsydian_livesync_milestone -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/obsydian_livesync_milestone -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/f%3A901ad9d5684637e4177815944bff501e04571629b1f7c9c265cd476b2ed868c3 -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/obsydian_livesync_milestone -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/obsydian_livesync_milestone -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_revs_diff -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [SFTargetFilter]  File is not duplicated: later.md
+(debug) [SFTargetFilter]  File is target by local DB: later.md
+(debug) [SFTargetFilter]  File is target finally: later.md
+(debug) [SFTargetFilter]  File is not duplicated: later.md
+(debug) [SFTargetFilter]  File is target by local DB: later.md
+(debug) [SFTargetFilter]  File is target finally: later.md
+(debug) [SFTargetFilter]  File is not duplicated: later.md
+(debug) [SFTargetFilter]  File is target by local DB: later.md
+(debug) [SFTargetFilter]  File is target finally: later.md
+(debug) [SFTargetFilter]  File is not duplicated: later.md
+(debug) [SFTargetFilter]  File is target by local DB: later.md
+(debug) [SFTargetFilter]  File is target finally: later.md
+(debug) [SFTargetFilter]  File is not duplicated: later.md
+(debug) [SFTargetFilter]  File is target by local DB: later.md
+(debug) [SFTargetFilter]  File is target finally: later.md
+(debug) [SFTargetFilter]  File is not duplicated: later.md
+(debug) [SFTargetFilter]  File is target by local DB: later.md
+(debug) [SFTargetFilter]  File is target finally: later.md
+(Info) [ServiceDatabaseFileAccessCLI]  STORAGE -> DB (plain) later.md
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_revs_diff -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_bulk_docs -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_revs_diff -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_bulk_docs -> 201
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 201
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_bulk_get -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_changes -> 200
+(debug) [SFTargetFilter]  File is not duplicated: inbox/remote.md
+(debug) [SFTargetFilter]  File is target by local DB: inbox/remote.md
+(debug) [SFTargetFilter]  File is target finally: inbox/remote.md
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/ -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_revs_diff -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/obsydian_livesync_version -> 200
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_all_docs -> 200
+(debug) [SFTargetFilter]  File is not duplicated: inbox/remote.md
+(debug) [SFTargetFilter]  File is target by local DB: inbox/remote.md
+(debug) [SFTargetFilter]  File is target finally: inbox/remote.md
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/W2nBGaBMXPIFt72b6NRU6g%3D%3D -> 201
+(Verbose) [ServiceFileHandler]  Processing inbox/remote.md (f:a91b51 :1-5ad) : Started...
+(debug) [SFTargetFilter]  File is not duplicated: inbox/remote.md
+(debug) [SFTargetFilter]  File is target by local DB: inbox/remote.md
+(debug) [SFTargetFilter]  File is target finally: inbox/remote.md
+(debug) [SFTargetFilter]  File is not duplicated: inbox/remote.md
+(debug) [SFTargetFilter]  File is target by local DB: inbox/remote.md
+(debug) [SFTargetFilter]  File is target finally: inbox/remote.md
+(Verbose) [ServiceFileHandler]  File inbox/remote.md  
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 201
+(debug) [SFTargetFilter]  File is not duplicated: inbox/remote.md
+(debug) [SFTargetFilter]  File is target by local DB: inbox/remote.md
+(debug) [SFTargetFilter]  File is target finally: inbox/remote.md
+(debug) [RemoteService]  [REQ] (POST) http://couchdb:5984/notes/_revs_diff -> 200
+(debug) [RemoteService]  [REQ] (GET) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 200
+(Info) [ServiceFileHandler]  Processing inbox/remote.md (f:a91b51 :1-5ad) : Done
+(debug) [RemoteService]  [REQ] (PUT) http://couchdb:5984/notes/_local/r3nmCGX_0OHM25Hc21tOEA%3D%3D -> 201
+(debug) [SFTargetFilter]  File is not duplicated: inbox/remote.md
+(debug) [SFTargetFilter]  File is target by local DB: inbox/remote.md
+(debug) [SFTargetFilter]  File is target finally: inbox/remote.md

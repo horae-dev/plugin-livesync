@@ -1,73 +1,71 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The plugin: one source, `livesync.inbox`, that proposes a task per message.
+"""The Horae plugin: one source, `livesync.status`, the health of the LiveSync sidecar.
 
-The core's plugin host starts this module as an MCP server over stdio (`python -m
-horae_livesync`). The plugin never writes anything: it returns data and proposes intents,
-which the core checks against `plugin.yaml`'s permissions, shows as a dry-run diff and
-applies.
+The sidecar (`horae-livesync run`, its own container) mirrors the CouchDB database into the
+vault folder and writes `status.json` into a directory it shares with Horae. This source reads
+that file and returns the health (`horae_livesync.status.evaluate`): whether the CLI is live,
+CouchDB answers, when replication last succeeded and how far behind it is. It proposes no
+intent and connects to nothing: a pipeline uses its data (a line in the morning note, a
+`notify` when unhealthy).
 
-A message comes from a service the plugin does not control, so its fields are **untrusted**:
-the subject reaches the task title only through `intents.task_create`, which escapes it for
-Obsidian Tasks (a subject holding `📅 2020-01-01` must not schedule the task).
+**Paths.** The status directory is the plugin's single `paths.read` entry as approved in
+`horae.lock` (the manifest asks for none, as plugin-obsidian does for the vault). The file is
+opened without following a symbolic link, at most 64 KiB, and only typed fields of it are
+returned (it is written by another container: treated as untrusted).
 """
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+import asyncio
+from datetime import UTC, datetime
+from typing import Any
 
-from horae_sdk import Call, Output, Permissions, Plugin, intents
+from horae_sdk import Call, Output, Paths, Permissions, Plugin, PluginError
+
+from horae_livesync import status
 
 NAME = "livesync"
-"""The plugin's name, also the namespace of its refs (`livesync.inbox`) and fingerprints."""
+"""The plugin's name, also the namespace of its refs (`livesync.status`)."""
 VERSION = "0.1.0"
 COMMAND = ["python3", "-m", "horae_livesync"]
 """`runtime.command` of `plugin.yaml`. When installing, pin an absolute interpreter that has
 this package (the host's `PATH` is fixed and its working directory empty)."""
-PERMISSIONS = Permissions(intents=["task.create"])
-"""Declare the least you need: every network host, secret, path and intent type."""
+PERMISSIONS = Permissions()
+"""No intent, host or secret; the status directory is approved as `paths.read` in the lock."""
 
 
-class Inbox(Protocol):
-    """Where the messages come from. Replace it with your service's client; the tests give the
-    plugin a fake one that answers from synthetic fixtures."""
-
-    def messages(self, folder: str) -> Sequence[Mapping[str, Any]]:
-        """The messages of `folder`, each a mapping with at least `id` and `subject`."""
-        ...
-
-
-class SampleInbox:
-    """A stand-in client with one synthetic message, so the plugin runs as shipped."""
-
-    def messages(self, folder: str) -> Sequence[Mapping[str, Any]]:
-        return [{"id": "welcome", "subject": f"Welcome to {folder}"}]
+def status_dir(paths: Paths) -> str:
+    """The status directory: the single approved `paths.read` entry."""
+    if len(paths.read) != 1:
+        raise PluginError(
+            "the livesync plugin needs exactly one paths.read entry (the status directory)"
+        )
+    return paths.read[0]
 
 
-def build(inbox: Inbox) -> Plugin:
-    """The plugin, reading its messages from `inbox`."""
+def build() -> Plugin:
     plugin = Plugin(
         NAME,
         version=VERSION,
         permissions=PERMISSIONS,
-        description="Proposes a task to reply to each message of a folder.",
+        description="Mirrors an E2EE LiveSync CouchDB into the vault folder; reports its health.",
     )
 
-    @plugin.source(f"{NAME}.inbox")
-    def inbox_source(call: Call, folder: str = "inbox") -> Output:
-        # `folder` is a pipeline parameter (trusted); every message field is untrusted data.
-        seen: list[dict[str, str]] = []
-        tasks: list[dict[str, Any]] = []
-        for message in inbox.messages(folder):
-            message_id, subject = message.get("id"), message.get("subject")
-            if not isinstance(message_id, str) or not isinstance(subject, str):
-                continue
-            seen.append({"id": message_id, "subject": subject})
-            key = intents.fingerprint(NAME, "reply", message_id)
-            tasks.append(intents.task_create(f"Reply to {subject}", key=key))
-        return Output({"folder": folder, "messages": seen}, intents=tasks)
+    @plugin.source(f"{NAME}.status")
+    async def status_source(call: Call, max_lag_s: int = 300, max_age_s: int = 120) -> Output:
+        if not 0 < max_lag_s <= 86400 or not 0 < max_age_s <= 86400:
+            raise PluginError("max_lag_s and max_age_s must be 1 to 86400 seconds")
+        directory = status_dir(call.paths)
+        try:
+            document: dict[str, Any] | None = await asyncio.to_thread(status.read, directory)
+        except ValueError:
+            document = {"schema_version": None}
+        health = status.evaluate(
+            document, datetime.now(UTC), max_lag_s=max_lag_s, max_age_s=max_age_s
+        )
+        return Output(health)
 
     return plugin
 
 
 def manifest() -> dict[str, Any]:
     """The `plugin.yaml` document of this plugin (`python -m horae_livesync --manifest`)."""
-    return build(SampleInbox()).manifest(command=COMMAND, license="Apache-2.0")
+    return build().manifest(command=COMMAND, horae=">=0,<0.2", license="Apache-2.0")

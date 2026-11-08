@@ -22,8 +22,9 @@ uv lock --check                   # uv.lock matches pyproject.toml
 uv run ruff check                 # lint
 uv run ruff format --check        # formatting (drop --check to fix)
 uv run mypy                       # types (strict)
-uv run pytest --cov               # tests: recordings replayed, manifest checked, stdio served; coverage gate 85%
-HORAE_SDK_RECORD=1 uv run pytest  # rewrite tests/recordings from the current outputs (review the diff; refused in CI)
+uv run pytest --cov               # unit tests: config, secrets, CLI log, probe, supervisor (fake CLI), source, manifest; coverage gate 85%
+docker build -t horae-livesync:test .                                      # the sidecar image
+HORAE_LIVESYNC_IMAGE=horae-livesync:test uv run pytest -m integration     # two-way sync against a real CouchDB (needs Docker)
 uv run python -m horae_livesync --manifest > plugin.yaml   # regenerate the manifest
 uv run pre-commit run --all-files # ruff + gitleaks
 ```
@@ -32,7 +33,7 @@ CI runs the same checks; the aggregate **CI OK** check must be green before merg
 ## Working rules
 - Branch: `story/<issue-number>-<short-slug>`. One PR per issue; keep it under ~400 changed lines when possible.
 - Python 3.12+, managed with **uv**. Style: ruff, mypy strict, pytest. See [Commands](#commands).
-- Plugin rules ([horae-sdk README](https://github.com/horae-dev/horae/blob/main/sdk/README.md)): never `print` (stdout is the protocol channel); untrusted fields reach a task title only through `intents.task_create`; regenerate `plugin.yaml` when tools or permissions change; recordings and fixtures are synthetic.
+- Plugin rules ([horae-sdk README](https://github.com/horae-dev/horae/blob/main/sdk/README.md)): never `print` (stdout is the protocol channel); untrusted fields reach a task title only through `intents.task_create`; regenerate `plugin.yaml` when tools or permissions change; fixtures are synthetic.
 - **Tests first** for behaviour: every acceptance criterion maps to at least one test.
 - Never add a network host, secret, path, intent or LLM call that is not declared and justified in the PR.
 - Never commit secrets, tokens, personal data or real hostnames. Fixtures must be synthetic.

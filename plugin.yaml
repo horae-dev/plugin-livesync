@@ -3,15 +3,13 @@
 # interpreter that has this package (horae-sdk README, "The command").
 name: livesync
 version: 0.1.0
-horae: '>=0'
-description: Proposes a task to reply to each message of a folder.
+horae: '>=0,<0.2'
+description: Mirrors an E2EE LiveSync CouchDB into the vault folder; reports its health.
 license: Apache-2.0
 provides:
   sources:
-  - livesync.inbox
-permissions:
-  intents:
-  - task.create
+  - livesync.status
+permissions: {}
 runtime:
   protocol: mcp-stdio
   command:

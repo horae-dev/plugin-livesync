@@ -8,7 +8,8 @@ sensitive_paths:
   - "plugin.yaml" # permissions: network hosts, secrets, paths, intents
   - "**/auth/**"
   - ".github/workflows/**"
-  - "Dockerfile"
+  - "Dockerfile" # the sidecar image: the pinned LiveSync CLI and its base images
+  - "deploy/**" # how the sidecar runs: user, read-only root, capabilities, mounts, secrets
   - "pyproject.toml" # dependencies, including the horae-sdk source
   - "uv.lock" # the pinned dependencies, including the horae-sdk commit
   - ".pre-commit-config.yaml" # hooks run on contributors' machines
