@@ -1,0 +1,18 @@
+# Written by `uv run python -m horae_livesync --manifest > plugin.yaml`; tests/test_manifest.py
+# checks it is what the SDK writes. When installing, pin runtime.command to an absolute
+# interpreter that has this package (horae-sdk README, "The command").
+name: livesync
+version: 0.1.0
+horae: '>=0,<0.2'
+description: Mirrors an E2EE LiveSync CouchDB into the vault folder; reports its health.
+license: Apache-2.0
+provides:
+  sources:
+  - livesync.status
+permissions: {}
+runtime:
+  protocol: mcp-stdio
+  command:
+  - python3
+  - -m
+  - horae_livesync
