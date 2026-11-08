@@ -1,0 +1,54 @@
+Third-party software in the horae-livesync image
+================================================
+
+The horae-livesync code (this repository) is licensed under Apache-2.0
+(/usr/share/licenses/horae-livesync/LICENSE). The image also contains the
+software below, each under its own licence. Checked against the pinned
+LiveSync CLI image ghcr.io/vrtmrz/livesync-cli:1.0.46-patch2-cli
+(sha256:4a0675db1ebd6d891624daedb37b1467f60de7b1a090f0252b7a1769fb382701),
+built from vrtmrz/obsidian-livesync commit
+c2e4e9198b01a58be72d9b76fd6f2661aeb01ec8. Refresh this file when the CLI is
+bumped (README, "Development").
+
+Self-hosted LiveSync CLI (/app/dist)
+  vrtmrz/obsidian-livesync, src/apps/cli, and the @vrtmrz/livesync-commonlib
+  code bundled into it. MIT, Copyright (c) 2021 vorotamoroz.
+  Licence text: /usr/share/licenses/obsidian-livesync/LICENSE
+
+Node.js 22.23.4 (/usr/local/bin/node)
+  MIT, with the licences of the libraries it bundles (OpenSSL, V8, libuv,
+  ICU, and others) in the same file.
+  Licence text: /usr/share/licenses/node/LICENSE
+
+npm packages of the CLI (/app/node_modules), unchanged from the CLI image.
+Each package's licence text is in its own directory under /app/node_modules
+(LICENSE, LICENCE or COPYING, or the "license" field of its package.json):
+  MIT ............ 94 packages
+  Apache-2.0 ..... 34 packages (PouchDB 9.0.0, @aws-crypto/*, @smithy/*,
+                   @aws-sdk/types, reflect-metadata, transform-pouch,
+                   vuvuzela)
+  MPL-2.0 ........ mediabunny 1.65.2. MPL-2.0 is a file-level copyleft
+                   licence: its source files are distributed unmodified in
+                   /app/node_modules/mediabunny, and the source is available
+                   at https://github.com/Vanilagy/mediabunny (licence text:
+                   /app/node_modules/mediabunny/LICENSE).
+  BSD-3-Clause ... asn1js, ieee754, tough-cookie
+  BSD-2-Clause ... webidl-conversions
+  BSD ............ readable-stream 0.0.4
+  ISC ............ idb, inherits
+  BlueOak-1.0.0 .. minimatch 11, @isaacs/nonrecursive-glob-match
+  Unlicense ...... fetch-cookie, tweetnacl
+  0BSD ........... tslib
+  WTFPL OR MIT ... spark-md5
+
+Python 3.12 (/usr/local, from the python:3.12-slim-bookworm image)
+  PSF-2.0. Licence text: /usr/local/lib/python3.12/LICENSE.txt
+
+Python packages of horae-livesync (/opt/venv/lib/python3.12/site-packages)
+  horae-sdk (Apache-2.0), pyyaml (MIT), the MCP SDK and its dependencies
+  (pydantic, anyio, httpx2, starlette and others: MIT, BSD-3-Clause,
+  Apache-2.0). Each package's licence is in its *.dist-info directory.
+
+Debian bookworm packages (the base image)
+  Various free software licences; each package's copyright file is in
+  /usr/share/doc/<package>/copyright.

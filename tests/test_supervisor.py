@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The supervisor, running a fake CLI (`tests/fake_cli.py`) instead of the LiveSync CLI."""
 
+import base64
+import dataclasses
 import io
 import json
 import sys
@@ -10,6 +12,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -47,15 +50,28 @@ def layout(tmp_path: Path, behaviour: str = "ok") -> Layout:
     )
 
 
-def make(tmp_path: Path, secrets_dir: Path, behaviour: str = "ok", **change: Any) -> Supervisor:
+def make(
+    tmp_path: Path,
+    secrets_dir: Path,
+    behaviour: str = "ok",
+    prober: FakeProber | None = None,
+    auth_retry_s: int = 900,
+    **change: Any,
+) -> Supervisor:
     document = config_document(secrets_dir, health={"probe_interval_s": 5}, **change)
     return Supervisor(
-        parse(document),
+        dataclasses.replace(parse(document), auth_retry_s=auth_retry_s),
         layout(tmp_path, behaviour),
         environ={"TZ": "UTC", "SECRET_LOOKING": "x"},
         out=io.StringIO(),
-        prober=FakeProber(Probe(True, None, 9, 9)),
+        prober=prober or FakeProber(Probe(True, None, 9, 9)),
     )
+
+
+def start(sup: Supervisor) -> threading.Thread:
+    runner = threading.Thread(target=lambda: setattr(sup, "code", sup.run()), daemon=True)
+    runner.start()
+    return runner
 
 
 def output(sup: Supervisor) -> str:
@@ -106,12 +122,17 @@ def test_runs_the_daemon_with_private_settings(tmp_path: Path, secrets_dir: Path
 
     out = output(sup)
     assert PASSWORD not in out
+    assert quote(PASSWORD, safe="") not in out
+    assert base64.b64encode(f"horae:{PASSWORD}".encode()).decode() not in out
     assert "[Info] leaked ***" in out
+    assert '[Info] leaked *** "***"' in out
+    assert "[Info] leaked Authorization: Basic ***" in out
     assert "[Daemon] LiveSync active" in out
     assert "(debug)" not in out
 
     final = status.read(tmp_path / "status")
     assert final is not None
+    assert final["thresholds"] == {"probe_interval_s": 5, "max_age_s": 120, "max_lag_s": 300}
     assert final["process"]["state"] == "exited"
     assert final["process"]["last_exit_code"] == 0
     assert final["files"] == {"in": 1, "out": 2}
@@ -168,6 +189,86 @@ def test_status_write_failures_are_logged(tmp_path: Path, secrets_dir: Path) -> 
     assert "cannot write the status file" in output(sup)
 
 
+def test_refused_credentials_at_start_never_start_the_cli(
+    tmp_path: Path, secrets_dir: Path
+) -> None:
+    prober = FakeProber(Probe(False, "unauthorized"), Probe(True, None, 9, 9))
+    sup = make(tmp_path, secrets_dir, prober=prober, auth_retry_s=2)
+    runner = start(sup)
+    try:
+        wait_for(lambda: sup.tracker.doc["process"]["state"] == "auth_failed")
+        written = status.read(tmp_path / "status")
+        assert written is not None
+        assert written["remote"]["error"] == "unauthorized"
+        assert written["remote"]["retry_at"] is not None
+        health = status.evaluate(written, datetime.now(UTC))
+        assert "unauthorized" in health["problems"]
+        assert "not_live" in health["problems"]
+        time.sleep(1)
+        assert len(prober.calls) == 1  # no probe with the refused credentials
+        assert not (tmp_path / "db" / "seen.json").exists()
+        # After auth_retry_s, one probe: it passes, so the CLI starts.
+        wait_for(lambda: sup.tracker.doc["process"]["state"] == "live")
+    finally:
+        sup.stop()
+        runner.join(30)
+    assert len(prober.calls) >= 2
+    assert sup.tracker.doc["remote"]["retry_at"] is None
+    assert "refused the credentials (unauthorized)" in output(sup)
+    assert "trying the CouchDB credentials again" in output(sup)
+
+
+def test_a_cli_refused_by_couchdb_is_stopped_not_restarted(
+    tmp_path: Path, secrets_dir: Path
+) -> None:
+    sup = make(tmp_path, secrets_dir, behaviour="unauth")
+    runner = start(sup)
+    requests = tmp_path / "db" / "requests.log"
+    try:
+        wait_for(lambda: sup.tracker.doc["process"]["state"] == "auth_failed")
+        count = len(requests.read_text().splitlines())
+        time.sleep(1)
+        assert len(requests.read_text().splitlines()) == count  # stopped: no more requests
+        doc = sup.tracker.doc
+        assert doc["remote"]["error"] == "unauthorized"
+        assert doc["process"]["restarts"] == 0
+        assert doc["replication"]["last_error"] == "unauthorized"
+    finally:
+        sup.stop()
+        runner.join(30)
+    assert getattr(sup, "code", None) == 0
+    final = status.read(tmp_path / "status")
+    assert final is not None
+    assert final["process"]["state"] == "auth_failed"
+
+
+def test_a_failing_log_reader_marks_the_status(
+    tmp_path: Path, secrets_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_line = Tracker.line
+
+    def line(self: Tracker, text: str) -> None:
+        if "LOG-READER-BOOM" in text:
+            raise RuntimeError("boom")
+        real_line(self, text)
+
+    monkeypatch.setattr(Tracker, "line", line)
+    sup = make(tmp_path, secrets_dir, behaviour="badoutput")
+    runner = start(sup)
+    try:
+        wait_for(lambda: sup.tracker.doc["process"]["log_reader_error"] == "RuntimeError")
+        wait_for(lambda: "log_reader_failed" in health_of(tmp_path)["problems"])
+    finally:
+        sup.stop()
+        runner.join(30)
+    assert "stopped reading the CLI's output (RuntimeError)" in output(sup)
+    assert getattr(sup, "code", None) == 0
+
+
+def health_of(tmp_path: Path) -> dict[str, Any]:
+    return status.evaluate(status.read(tmp_path / "status"), datetime.now(UTC))
+
+
 def test_tracker_pending_and_checkpoints() -> None:
     clock = [datetime(2026, 11, 8, tzinfo=UTC)]
     tracker = Tracker("v", now=lambda: clock[0])
@@ -181,8 +282,17 @@ def test_tracker_pending_and_checkpoints() -> None:
     assert tracker.doc["replication"]["pending"] == 3
     since = tracker.doc["replication"]["pending_since"]
     clock[0] += timedelta(seconds=30)
-    tracker.probed(Probe(True, None, 12, 8))
-    assert tracker.doc["replication"]["pending_since"] == since  # still behind since then
+    tracker.probed(Probe(True, None, 12, 7))
+    assert tracker.doc["replication"]["pending_since"] == since  # no progress since then
+    clock[0] += timedelta(seconds=30)
+    tracker.probed(Probe(True, None, 14, 8))
+    # The checkpoint moved: the lag counts from this progress, not from the first pending.
+    assert tracker.doc["replication"]["pending_since"] == "2026-11-08T00:01:00Z"
+    tracker.probed(Probe(False, "timeout"))
+    clock[0] += timedelta(seconds=600)
+    tracker.probed(Probe(True, None, 14, 8))
+    # An outage carries over: the checkpoint did not move, so the lag includes it.
+    assert tracker.doc["replication"]["pending_since"] == "2026-11-08T00:01:00Z"
     tracker.probed(Probe(True, None, 12, 12))
     assert tracker.doc["replication"]["pending_since"] is None
     tracker.probed(Probe(True, None, 12, None))
@@ -191,6 +301,22 @@ def test_tracker_pending_and_checkpoints() -> None:
     assert tracker.doc["remote"]["ok"] is False
     assert tracker.doc["remote"]["error"] == "unauthorized"
     assert tracker.doc["remote"]["update_seq"] == 12  # kept from the last good probe
+
+
+def test_tracker_replication_errors() -> None:
+    clock = [datetime(2026, 11, 8, tzinfo=UTC)]
+    tracker = Tracker("v", now=lambda: clock[0])
+    tracker.event(Event("sync_error", "unreachable"))
+    first = tracker.doc["replication"]["failing_since"]
+    clock[0] += timedelta(seconds=10)
+    tracker.event(Event("sync_error", "server_error"))
+    assert tracker.doc["replication"]["failing_since"] == first
+    assert tracker.doc["replication"]["last_error"] == "server_error"
+    assert tracker.auth_error is None
+    tracker.event(Event("sync_ok"))
+    assert tracker.doc["replication"]["failing_since"] is None
+    tracker.event(Event("sync_error", "forbidden"))
+    assert tracker.auth_error == "forbidden"
 
 
 def test_write_private_replaces_and_never_follows_links(tmp_path: Path) -> None:

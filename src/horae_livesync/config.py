@@ -19,13 +19,19 @@ e2ee:
   passphrase_secret: LIVESYNC_E2EE_PASSPHRASE
   path_obfuscation: true               # must match the Obsidian clients
 sync: { mode: live }                   # or { mode: poll, poll_interval_s: 60 }
-health: { probe_interval_s: 30, request_timeout_s: 10 }
-settings: {}                           # other LiveSync settings to match the clients
+health: { probe_interval_s: 30, request_timeout_s: 10, max_age_s: 120, max_lag_s: 300,
+          auth_retry_s: 900 }
+settings: {}                           # parity settings to match the clients (ALLOWED_SETTINGS)
 secrets: { dir: /run/secrets, refs: {} }
 ```
 
 The rendered settings start from the CLI's own defaults (`init-settings` of the pinned CLI),
-so a newer CLI brings its defaults along; the sidecar sets only what it owns.
+so a newer CLI brings its defaults along; the sidecar sets only what it owns (`OWNED_SETTINGS`)
+and `settings` may change only the parity settings of `ALLOWED_SETTINGS`, the ones LiveSync
+requires to match between devices (its `TweakCompatibilityRules`). Every other setting of the
+pinned CLI is in `REFUSED_SETTINGS` and stays at its default; `tests/test_config.py` checks
+that each key of the pinned CLI's defaults is in exactly one of the three, so a CLI bump that
+adds a setting forces a decision.
 """
 
 import ipaddress
@@ -39,12 +45,12 @@ from urllib.parse import urlsplit
 import yaml
 
 from horae_livesync.secrets import (
-    SECRET_NAME,
     EnvRef,
     FileRef,
     SecretRef,
     SecretResolver,
     valid_file_name,
+    valid_name,
 )
 
 SCHEMA_VERSION = 1
@@ -71,11 +77,104 @@ OWNED_SETTINGS = frozenset(
         "isConfigured",
     }
 )
-# Credentials, other remotes and anything that could hold a secret: never through `settings`.
-_FORBIDDEN_SETTING = re.compile(
-    r"(?i)(pass|secret|key|token|credential|jwt|encrypted|header|uri|endpoint|bucket|region"
-    r"|user|remote|^p2p_|configuration)"
-)
+
+
+@dataclass(frozen=True, slots=True)
+class Allowed:
+    """A parity setting `settings` may set: its type, and its values or range."""
+
+    kind: type
+    values: frozenset[object] | None = None
+    low: int = 0
+    high: int = 0
+
+    def check(self, key: str, value: object) -> None:
+        if type(value) is not self.kind:
+            raise ConfigError(f"settings.{key} must be a {self.kind.__name__}")
+        if self.values is not None and value not in self.values:
+            shown = ", ".join(repr(v) for v in sorted(self.values, key=repr))
+            raise ConfigError(f"settings.{key} must be one of {shown}")
+        in_range = not isinstance(value, int) or self.low <= value <= self.high
+        if self.kind is int and self.values is None and not in_range:
+            raise ConfigError(f"settings.{key} must be from {self.low} to {self.high}")
+
+
+_BOOL = Allowed(bool)
+# The parity settings: LiveSync's `TweakCompatibilityRules` (the values every device must
+# share, checked by the plug-in's "configuration mismatch" dialog) minus the two the sidecar
+# owns (`encrypt`, `usePathObfuscation`). Enumerations are the pinned CLI's own values.
+ALLOWED_SETTINGS: Mapping[str, Allowed] = {
+    "pathNormalizationVersion": Allowed(int, frozenset({0, 1})),
+    # 1 needs an ID derivation key, a secret `settings` cannot carry: not supported yet.
+    "idDerivationVersion": Allowed(int, frozenset({0})),
+    "E2EEAlgorithm": Allowed(str, frozenset({"", "v2", "forceV1"})),
+    "hashAlg": Allowed(str, frozenset({"", "xxhash32", "xxhash64", "mixed-purejs", "sha1"})),
+    "chunkSplitterVersion": Allowed(str, frozenset({"v1", "v2", "v2-segmenter", "v3-rabin-karp"})),
+    "customChunkSize": Allowed(int, low=0, high=1000),
+    "minimumChunkSize": Allowed(int, low=1, high=100_000),
+    "longLineThreshold": Allowed(int, low=1, high=1_000_000),
+    "handleFilenameCaseSensitive": _BOOL,
+    "useDynamicIterationCount": _BOOL,
+    "encryptInternalMetadata": _BOOL,
+    "enableCompression": _BOOL,
+    "enableChunkSplitterV2": _BOOL,
+    "useSegmenter": _BOOL,
+    "useEden": _BOOL,
+    "maxChunksInEden": Allowed(int, low=0, high=100_000),
+    "maxTotalLengthInEden": Allowed(int, low=0, high=100_000_000),
+    "maxAgeInEden": Allowed(int, low=0, high=100_000),
+    "usePluginSyncV2": _BOOL,
+}
+# Every other setting of the pinned CLI: credentials and other remotes, P2P, JWT, plugin and
+# internal-file sync, ignore and sync-only patterns, suspend switches, logging to a file,
+# `disableCheckingConfigMismatch`, `trashInsteadDelete`, conflict handling, UI and tuning.
+# They stay at the CLI's default.
+REFUSED_SETTINGS = frozenset(
+    {
+        "useCustomRequestHandler", "batchSaveInLiveSync", "syncOnSave",
+        "strictContentCheckOnStartup", "savingDelay", "lessInformationInLog", "gcDelay",
+        "versionUpFlash", "showVerboseLog", "suspendFileWatching", "trashInsteadDelete",
+        "periodicReplicationInterval", "syncOnFileOpen", "idDerivationKey", "doNotDeleteFolder",
+        "resolveConflictsByNewerFile", "batchSave", "batchSaveMinimumDelay",
+        "batchSaveMaximumDelay", "deviceAndVaultName", "usePluginSettings", "showOwnPlugins",
+        "showStatusOnEditor", "showStatusOnStatusbar", "showOnlyIconsOnEditor",
+        "hideFileWarningNotice", "networkWarningStyle", "usePluginSync", "autoSweepPlugins",
+        "autoSweepPluginsPeriodic", "notifyPluginOrSettingUpdated", "checkIntegrityOnSave",
+        "batch_size", "batches_limit", "useHistory", "disableRequestURI", "skipOlderFilesOnSync",
+        "checkConflictOnlyOnOpen", "showMergeDialogOnlyOnActive", "syncInternalFiles",
+        "syncInternalFilesBeforeReplication", "syncInternalFilesIgnorePatterns",
+        "syncInternalFilesTargetPatterns", "syncInternalFilesInterval",
+        "additionalSuffixOfDatabaseName", "ignoreVersionCheck", "lastReadUpdates",
+        "deleteMetadataOfDeletedFiles", "syncIgnoreRegEx", "syncOnlyRegEx", "readChunksOnline",
+        "watchInternalFileChanges", "automaticallyDeleteMetadataOfDeletedFiles",
+        "disableMarkdownAutoMerge", "writeDocumentsIfConflicted", "syncAfterMerge",
+        "configPassphraseStore", "encryptedPassphrase", "encryptedIdDerivationKey",
+        "encryptedCouchDBConnection", "permitEmptyPassphrase", "remoteConfigurations",
+        "activeConfigurationId", "P2P_ActiveRemoteConfigurationId", "useIndexedDBAdapter",
+        "useTimeouts", "writeLogToTheFile", "doNotPaceReplication", "hashCacheMaxCount",
+        "hashCacheMaxAmount", "concurrencyOfReadChunksOnline", "minimumIntervalOfReadChunksOnline",
+        "suspendParseReplicationResult", "doNotSuspendOnFetching", "useIgnoreFiles", "ignoreFiles",
+        "syncOnEditorSave", "keepReplicationActiveInBackground", "allowSleepDuringSynchronisation",
+        "allowSleepDuringSynchronisationOnDesktop", "pluginSyncExtendedSetting", "syncMaxSizeInMB",
+        "settingSyncFile", "writeCredentialsForSettingSync", "notifyAllSettingSyncFile",
+        "settingVersion", "accessKey", "bucket", "endpoint", "region", "secretKey",
+        "disableCheckingConfigMismatch", "displayLanguage", "disableWorkerForGeneratingChunks",
+        "processSmallFilesInUIThread", "notifyThresholdOfRemoteStorageSize", "usePluginEtc",
+        "doNotUseFixedRevisionForChunks", "showLongerLogInsideEditor", "sendChunksBulk",
+        "sendChunksBulkMaxSize", "useAdvancedMode", "usePowerUserMode", "useEdgeCaseMode",
+        "enableDebugTools", "suppressNotifyHiddenFilesChange", "syncMinimumInterval", "P2P_Enabled",
+        "P2P_AutoAccepting", "P2P_AppID", "P2P_roomID", "P2P_passphrase", "P2P_relays",
+        "P2P_AutoBroadcast", "P2P_AutoStart", "P2P_AutoSyncPeers", "P2P_AutoWatchPeers",
+        "P2P_SyncOnReplication", "P2P_RebuildFrom", "P2P_AutoAcceptingPeers",
+        "P2P_AutoDenyingPeers", "P2P_IsHeadless", "P2P_DevicePeerName", "P2P_turnServers",
+        "P2P_turnUsername", "P2P_turnCredential", "P2P_maxWirePayloadBytes", "P2P_connectionPath",
+        "P2P_useDiagRTC", "doctorProcessedVersion", "bucketCustomHeaders", "couchDB_CustomHeaders",
+        "useJWT", "jwtAlgorithm", "jwtKey", "jwtKid", "jwtSub", "jwtExpDuration", "useRequestAPI",
+        "useCouchDBCacheControlHeadersOnly", "bucketPrefix", "processSizeMismatchedFiles",
+        "forcePathStyle", "syncInternalFileOverwritePatterns", "useOnlyLocalChunk",
+        "maxMTimeForReflectEvents",
+    }
+)  # fmt: skip
 
 
 class ConfigError(ValueError):
@@ -99,6 +198,9 @@ class Config:
     poll_interval_s: int = 60
     probe_interval_s: int = 30
     request_timeout_s: int = 10
+    max_age_s: int = 120
+    max_lag_s: int = 300
+    auth_retry_s: int = 900
     settings: Mapping[str, Any] = field(default_factory=dict)
     secrets_dir: Path = Path("/run/secrets")
     secret_refs: Mapping[str, SecretRef] = field(default_factory=dict)
@@ -137,7 +239,11 @@ def parse(document: object) -> Config:
     )
     e2ee = _mapping(root.get("e2ee"), "e2ee", {"passphrase_secret", "path_obfuscation"})
     sync = _mapping(root.get("sync", {}), "sync", {"mode", "poll_interval_s"})
-    health = _mapping(root.get("health", {}), "health", {"probe_interval_s", "request_timeout_s"})
+    health = _mapping(
+        root.get("health", {}),
+        "health",
+        {"probe_interval_s", "request_timeout_s", "max_age_s", "max_lag_s", "auth_retry_s"},
+    )
     secrets = _mapping(root.get("secrets", {}), "secrets", {"dir", "refs"})
 
     mode = sync.get("mode", "live")
@@ -146,6 +252,10 @@ def parse(document: object) -> Config:
     obfuscation = e2ee.get("path_obfuscation", True)
     if not isinstance(obfuscation, bool):
         raise ConfigError("e2ee.path_obfuscation must be true or false")
+    probe = _int(health.get("probe_interval_s", 30), "health.probe_interval_s", 5, 600)
+    max_age = _int(health.get("max_age_s", max(120, 3 * probe)), "health.max_age_s", 15, 86400)
+    if max_age < 3 * probe:
+        raise ConfigError("health.max_age_s must be at least 3 x health.probe_interval_s")
     return Config(
         couchdb=CouchDB(
             url=_url(couch.get("url")),
@@ -157,12 +267,13 @@ def parse(document: object) -> Config:
         path_obfuscation=obfuscation,
         mode=mode,
         poll_interval_s=_int(sync.get("poll_interval_s", 60), "sync.poll_interval_s", 10, 3600),
-        probe_interval_s=_int(
-            health.get("probe_interval_s", 30), "health.probe_interval_s", 5, 600
-        ),
+        probe_interval_s=probe,
         request_timeout_s=_int(
             health.get("request_timeout_s", 10), "health.request_timeout_s", 1, 60
         ),
+        max_age_s=max_age,
+        max_lag_s=_int(health.get("max_lag_s", 300), "health.max_lag_s", 30, 86400),
+        auth_retry_s=_int(health.get("auth_retry_s", 900), "health.auth_retry_s", 900, 86400),
         settings=_settings(root.get("settings", {})),
         secrets_dir=_secrets_dir(secrets.get("dir", "/run/secrets")),
         secret_refs=_refs(secrets.get("refs", {})),
@@ -179,11 +290,8 @@ def render_settings(
     for key, value in config.settings.items():
         if key not in defaults:
             raise ConfigError(f"settings.{key} is not a setting of this LiveSync CLI")
-        default = defaults[key]
-        if type(value) is not type(default) and not (
-            isinstance(default, float) and type(value) is int
-        ):
-            raise ConfigError(f"settings.{key} must be a {type(default).__name__}")
+        if type(value) is not type(defaults[key]):
+            raise ConfigError(f"settings.{key} has another type in this LiveSync CLI")
         rendered[key] = value
     rendered.update(
         remoteType="",
@@ -235,8 +343,11 @@ def _username(value: object) -> str:
 
 
 def _secret_name(value: object, where: str) -> str:
-    if not isinstance(value, str) or not SECRET_NAME.fullmatch(value):
-        raise ConfigError(f"{where} must be a secret name (A-Z, 0-9, _), not a value")
+    if not isinstance(value, str) or not valid_name(value):
+        raise ConfigError(
+            f"{where} must be a secret name (A-Z, 0-9, _; not HORAE_*, LD_*, DYLD_*, "
+            "PYTHON*, PATH or HOME), not a value"
+        )
     return value
 
 
@@ -277,17 +388,21 @@ def _private_host(host: str) -> bool:
 
 
 def _settings(value: object) -> dict[str, Any]:
+    """Only the parity settings of `ALLOWED_SETTINGS`, each with its type and values."""
     if not isinstance(value, dict):
         raise ConfigError("settings must be a mapping")
     for key, item in value.items():
         if not isinstance(key, str) or not key.isidentifier():
             raise ConfigError("settings: keys must be LiveSync setting names")
-        if key in OWNED_SETTINGS or _FORBIDDEN_SETTING.search(key):
-            raise ConfigError(f"settings.{key} is set by the sidecar or may hold a secret")
-        if not isinstance(item, str | int | float | bool) or (
-            isinstance(item, str) and len(item) > 4096
-        ):
-            raise ConfigError(f"settings.{key} must be a string, number or boolean")
+        if key in OWNED_SETTINGS:
+            raise ConfigError(f"settings.{key} is set by the sidecar")
+        allowed = ALLOWED_SETTINGS.get(key)
+        if allowed is None:
+            raise ConfigError(
+                f"settings.{key} is not a parity setting the sidecar accepts (README, "
+                "Configuration)"
+            )
+        allowed.check(key, item)
     return value
 
 
@@ -302,8 +417,8 @@ def _refs(value: object) -> dict[str, SecretRef]:
         raise ConfigError("secrets.refs must be a mapping")
     refs: dict[str, SecretRef] = {}
     for name, ref in value.items():
-        if not isinstance(name, str) or not SECRET_NAME.fullmatch(name):
-            raise ConfigError("secrets.refs: keys must be secret names")
+        if not valid_name(name):
+            raise ConfigError("secrets.refs: keys must be secret names (not reserved ones)")
         if isinstance(ref, dict) and set(ref) == {"env"} and isinstance(ref["env"], str):
             if not _ENV_VAR.fullmatch(ref["env"]):
                 raise ConfigError(f"secrets.refs.{name}.env is not a variable name")

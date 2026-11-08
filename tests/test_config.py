@@ -19,6 +19,12 @@ def test_a_minimal_file_gets_the_defaults(secrets_dir: Path) -> None:
     assert loaded.couchdb.url == "http://couchdb:5984"
     assert loaded.path_obfuscation is True
     assert (loaded.mode, loaded.probe_interval_s, loaded.request_timeout_s) == ("live", 30, 10)
+    assert (loaded.max_age_s, loaded.max_lag_s, loaded.auth_retry_s) == (120, 300, 900)
+
+
+def test_max_age_defaults_to_three_probe_intervals(secrets_dir: Path) -> None:
+    loaded = parse(config_document(secrets_dir, health={"probe_interval_s": 60}))
+    assert loaded.max_age_s == 180
     assert loaded.secrets_dir == secrets_dir
     assert loaded.resolver().resolve("LIVESYNC_COUCHDB_PASSWORD").reveal() == PASSWORD
 
@@ -98,14 +104,35 @@ def test_errors_never_echo_a_value_pasted_as_a_secret_name(secrets_dir: Path) ->
         ({"e2ee": {"passphrase_secret": "P_SECRET", "path_obfuscation": "yes"}}, "obfuscation"),
         ({"settings": []}, "settings must be a mapping"),
         ({"settings": {"couchDB_PASSWORD": "x"}}, "set by the sidecar"),
-        ({"settings": {"customHeaderSecret": "x"}}, "may hold a secret"),
-        ({"settings": {"P2P_Enabled": True}}, "may hold a secret"),
+        ({"settings": {"usePathObfuscation": False}}, "set by the sidecar"),
+        ({"settings": {"customHeaderSecret": "x"}}, "not a parity setting"),
+        ({"settings": {"P2P_Enabled": True}}, "not a parity setting"),
+        ({"settings": {"suspendFileWatching": True}}, "not a parity setting"),
+        ({"settings": {"syncInternalFiles": True}}, "not a parity setting"),
+        ({"settings": {"usePluginSync": True}}, "not a parity setting"),
+        ({"settings": {"syncIgnoreRegEx": ".*"}}, "not a parity setting"),
+        ({"settings": {"writeLogToTheFile": True}}, "not a parity setting"),
+        ({"settings": {"disableCheckingConfigMismatch": True}}, "not a parity setting"),
+        ({"settings": {"trashInsteadDelete": False}}, "not a parity setting"),
         ({"settings": {"not a name": 1}}, "setting names"),
-        ({"settings": {"hashAlg": ["x"]}}, "string, number or boolean"),
-        ({"settings": {"hashAlg": "x" * 5000}}, "string, number or boolean"),
+        ({"settings": {"hashAlg": ["x"]}}, "must be a str"),
+        ({"settings": {"hashAlg": "md5"}}, "must be one of"),
+        ({"settings": {"E2EEAlgorithm": "v3"}}, "must be one of"),
+        ({"settings": {"chunkSplitterVersion": ""}}, "must be one of"),
+        ({"settings": {"pathNormalizationVersion": True}}, "must be a int"),
+        ({"settings": {"pathNormalizationVersion": 2}}, "must be one of"),
+        ({"settings": {"idDerivationVersion": 1}}, "must be one of"),
+        ({"settings": {"customChunkSize": -1}}, "from 0 to 1000"),
+        ({"settings": {"useSegmenter": 1}}, "must be a bool"),
+        ({"health": {"probe_interval_s": 60, "max_age_s": 120}}, "at least 3 x"),
+        ({"health": {"max_lag_s": 10}}, "max_lag_s"),
+        ({"health": {"auth_retry_s": 60}}, "auth_retry_s must be an integer from 900"),
+        ({"e2ee": {"passphrase_secret": "HORAE_PASSPHRASE"}}, "not HORAE_"),
+        ({"e2ee": {"passphrase_secret": "PYTHONPATH"}}, "not HORAE_"),
         ({"secrets": {"dir": "relative"}}, "absolute"),
         ({"secrets": {"dir": "/s", "refs": []}}, "refs must be a mapping"),
         ({"secrets": {"dir": "/s", "refs": {"lower": {"env": "X"}}}}, "secret names"),
+        ({"secrets": {"dir": "/s", "refs": {"LD_PRELOAD": {"env": "X"}}}}, "secret names"),
         ({"secrets": {"dir": "/s", "refs": {"A_B": {"env": "1X"}}}}, "variable name"),
         ({"secrets": {"dir": "/s", "refs": {"A_B": {"file": "../x"}}}}, "one file name"),
         ({"secrets": {"dir": "/s", "refs": {"A_B": {"url": "x"}}}}, "must be"),
@@ -178,25 +205,32 @@ def test_poll_mode_turns_live_sync_off(secrets_dir: Path, cli_defaults: dict[str
     assert render_settings(cli_defaults, loaded, PASSWORD, PASSPHRASE)["liveSync"] is False
 
 
-@pytest.mark.parametrize(
-    ("settings", "message"),
-    [
-        ({"noSuchSetting": True}, "not a setting of this LiveSync CLI"),
-        ({"hashAlg": 3}, "must be a str"),
-        ({"pathNormalizationVersion": True}, "must be a int"),
-    ],
-)
-def test_render_settings_checks_names_and_types(
-    secrets_dir: Path, cli_defaults: dict[str, Any], settings: dict[str, Any], message: str
+def test_render_settings_checks_names_and_types_against_the_cli(
+    secrets_dir: Path, cli_defaults: dict[str, Any]
 ) -> None:
-    loaded = parse(config_document(secrets_dir, settings=settings))
-    with pytest.raises(ConfigError, match=message):
-        render_settings(cli_defaults, loaded, PASSWORD, PASSPHRASE)
+    loaded = parse(config_document(secrets_dir, settings={"useSegmenter": True}))
+    older = {key: value for key, value in cli_defaults.items() if key != "useSegmenter"}
+    with pytest.raises(ConfigError, match="not a setting of this LiveSync CLI"):
+        render_settings(older, loaded, PASSWORD, PASSPHRASE)
+    changed = {**cli_defaults, "useSegmenter": "auto"}
+    with pytest.raises(ConfigError, match="another type in this LiveSync CLI"):
+        render_settings(changed, loaded, PASSWORD, PASSPHRASE)
 
 
-def test_render_settings_accepts_an_int_for_a_float(secrets_dir: Path) -> None:
-    loaded = parse(config_document(secrets_dir, settings={"ratio": 2}))
-    assert render_settings({"couchDB_URI": "", "ratio": 0.5}, loaded, "p", "q")["ratio"] == 2
+def test_every_setting_of_the_pinned_cli_is_classified(cli_defaults: dict[str, Any]) -> None:
+    """A CLI bump that adds, renames or removes a setting fails here: decide whether the
+    sidecar owns it, allows it (a parity setting) or refuses it, in `config`."""
+    owned, allowed = config.OWNED_SETTINGS, set(config.ALLOWED_SETTINGS)
+    refused = config.REFUSED_SETTINGS
+    assert not owned & allowed
+    assert not owned & refused
+    assert not allowed & refused
+    assert owned | allowed | refused == set(cli_defaults)
+
+
+def test_allowed_settings_accept_the_cli_defaults(cli_defaults: dict[str, Any]) -> None:
+    for key, allowed in config.ALLOWED_SETTINGS.items():
+        allowed.check(key, cli_defaults[key])
 
 
 def test_render_settings_refuses_odd_defaults(secrets_dir: Path) -> None:

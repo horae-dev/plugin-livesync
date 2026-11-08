@@ -8,13 +8,20 @@ documents are the CLI's own. The parsing is best effort: a line it does not know
 so a CLI that changes its wording makes the health `lag_unknown`, never wrong.
 
 Only what the CLI prints without `--verbose` is forwarded to the container's log (the
-`[Daemon]`, `[Ready]`, `(Notice)` lines), with every secret value replaced by `***`.
+`[Daemon]`, `[Ready]`, `(Notice)` lines), with every secret replaced by `***` in the forms
+`mask_forms` lists (as the core's redactor): the value, its percent-encoding, its JSON string
+escaping, its hex, its base64 (both alphabets, padded or not, and the misaligned base64 of the
+value inside a longer stream), and the base64 of `user:password` (an HTTP Basic header). The
+longest form is replaced first, so a secret that contains another is masked whole.
 """
 
+import base64
+import binascii
+import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 # Endpoints of a replication round (a pull or a push).
 _REPLICATION = ("_changes", "_bulk_docs", "_revs_diff", "_bulk_get")
@@ -93,9 +100,49 @@ def _request(url: str, code: str) -> list[Event]:
     return found
 
 
-def forwarded(line: str, secrets: Iterable[str], *, verbose: bool = False) -> str | None:
+def _base64_forms(raw: bytes) -> set[str]:
+    """The base64 of `raw`, alone and at each alignment inside a longer stream: for offset
+    `k` and `n` bytes, the characters `ceil(8k/6)` to `floor((8k + 8n)/6)` of the encoding
+    depend on `raw` alone (the core's `horae.secrets.redact`)."""
+    forms: set[str] = set()
+    for encode in (base64.b64encode, base64.urlsafe_b64encode):
+        aligned = encode(raw).decode("ascii")
+        forms |= {aligned, aligned.rstrip("=")}
+        for offset in (0, 1, 2):
+            encoded = encode(b"\0" * offset + raw + b"\0\0").decode("ascii")
+            forms.add(encoded[-(-8 * offset // 6) : (8 * offset + 8 * len(raw)) // 6])
+    return forms
+
+
+def _forms(value: str) -> set[str]:
+    raw = value.encode("utf-8")
+    hexed = binascii.hexlify(raw).decode("ascii")
+    percent = quote(value, safe="")
+    forms = {value, hexed, hexed.upper(), percent} | _base64_forms(raw)
+    forms.add(re.sub(r"%[0-9A-F]{2}", lambda m: m.group(0).lower(), percent))
+    for ascii_only in (True, False):
+        forms.add(json.dumps(value, ensure_ascii=ascii_only)[1:-1])
+    return forms
+
+
+def mask_forms(secrets: Iterable[str], username: str | None = None) -> tuple[str, ...]:
+    """Every form of `secrets` to mask, longest first. With `username`, also the base64 of
+    `username:secret` (what an HTTP Basic header carries)."""
+    forms: set[str] = set()
+    for secret in secrets:
+        if not secret:
+            continue
+        forms |= _forms(secret)
+        if username is not None:
+            forms |= _base64_forms(f"{username}:{secret}".encode())
+    forms.discard("")
+    return tuple(sorted(forms, key=lambda form: (-len(form), form)))
+
+
+def forwarded(line: str, masks: Sequence[str], *, verbose: bool = False) -> str | None:
     """The line as the container's log shows it, or None to drop it: only what the CLI prints
-    without `--verbose` (everything with `verbose`), with secret values masked."""
+    without `--verbose` (everything with `verbose`), with every form in `masks` (from
+    `mask_forms`, longest first) replaced by `***`."""
     stripped = line.rstrip("\r\n")
     if not stripped.strip():
         return None
@@ -103,7 +150,7 @@ def forwarded(line: str, secrets: Iterable[str], *, verbose: bool = False) -> st
         stripped.startswith(_VERBOSE) or stripped[:1].isspace() or stripped in ("{", "}")
     ):
         return None
-    for secret in secrets:
-        if secret:
-            stripped = stripped.replace(secret, "***")
+    for form in masks:
+        if form:
+            stripped = stripped.replace(form, "***")
     return stripped

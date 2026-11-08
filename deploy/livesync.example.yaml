@@ -2,10 +2,14 @@
 # horae.yaml in the instance repository: it holds no secret value, only secret names.
 schema_version: 1
 couchdb:
-  # The CouchDB of your Self-hosted LiveSync (PLAN §7: the `vault-sync` service). https to any
-  # host; plain http only to a private address or a service name on the same Docker network.
+  # The CouchDB of your Self-hosted LiveSync (PLAN §7: the `vault-sync` service). Plain http
+  # only to a private address or a service name on the same Docker network.
+  # https to any host (with a certificate from a public CA: a private CA or a self-signed
+  # certificate is not supported, README "Deploying").
   url: https://couchdb.example.org
   database: obsidian
+  # A dedicated CouchDB user for the sidecar, not the admin and not the clients' user: a wrong
+  # password then cannot lock the Obsidian clients out (README, "Deploying").
   username: horae
   password_secret: LIVESYNC_COUCHDB_PASSWORD
 e2ee:
@@ -15,10 +19,20 @@ e2ee:
   path_obfuscation: true
 # live: the CouchDB _changes feed (near real time). poll: every poll_interval_s seconds.
 sync: { mode: live }
-health: { probe_interval_s: 30, request_timeout_s: 10 }
-# Other LiveSync settings, to match your Obsidian clients where the CLI's defaults differ
-# (names and types as in the CLI's `init-settings`; credentials and remotes are refused).
-# For example a vault created before LiveSync 1.0.38 keeps the legacy path identity:
+# The probe of CouchDB and the health thresholds (`horae-livesync health` and the
+# `livesync.status` source use them unless told otherwise). max_age_s is at least
+# 3 x probe_interval_s. After a 401 or 403 the credentials are not used again for
+# auth_retry_s (at least 900: CouchDB locks a user out after repeated failures).
+health:
+  probe_interval_s: 30
+  request_timeout_s: 10
+  max_age_s: 120
+  max_lag_s: 300
+  auth_retry_s: 900
+# Parity settings only: the ones LiveSync requires to match between devices (README,
+# "Configuration"), where your Obsidian clients differ from the CLI's defaults. Anything else
+# is refused. For example a vault created before LiveSync 1.0.38 keeps the legacy path
+# identity:
 #   pathNormalizationVersion: 0
 settings: {}
 # As in horae.yaml (schemas decision 25): a secret is the file <dir>/<NAME> unless `refs` says

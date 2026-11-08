@@ -78,14 +78,15 @@ jobs:
           version: ${{ env.UV_VERSION }}
           cache-python: true
       - run: uv sync
-      # Replays tests/recordings (record mode is refused in CI); the 85% gate comes from
-      # [tool.coverage.report] in pyproject.toml.
+      # The unit tests run the supervisor against a fake CLI (tests/fake_cli.py) replaying a log
+      # recorded from the pinned CLI (tests/fixtures); the integration tests are deselected
+      # here (job Integration). The 85% gate comes from [tool.coverage.report] in pyproject.toml.
       - run: uv run pytest --cov --cov-report=term-missing
 
   integration:
     name: Integration (sidecar image + CouchDB)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,9 +99,10 @@ jobs:
       # The image as it ships (Dockerfile: the official LiveSync CLI pinned by digest); nothing
       # is pushed.
       - name: Build the sidecar image
-        run: docker build -t horae-livesync:test .
+        run: docker build --platform linux/amd64 -t horae-livesync:test .
       # The tests start a CouchDB container (pinned by digest), the sidecar and a second
-      # LiveSync client on a private Docker network, all with synthetic credentials.
+      # LiveSync client on a private Docker network, all with synthetic credentials, and cover
+      # restarts (deletions while down), a CouchDB outage and a wrong password.
       - name: Two-way sync against a real CouchDB
         env:
           HORAE_LIVESYNC_IMAGE: horae-livesync:test

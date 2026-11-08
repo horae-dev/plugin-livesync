@@ -26,9 +26,35 @@ def test_the_dockerfile_pins_the_cli_by_digest_and_names_its_version() -> None:
     assert version is not None
     assert re.fullmatch(r"ghcr\.io/vrtmrz/livesync-cli:(\S+)@sha256:[0-9a-f]{64}", image[1])
     assert image[1].split(":")[1].split("@")[0] == version[1]
-    for name in ("PYTHON", "UV"):
-        pinned = re.search(rf"^ARG {name}=\S+@sha256:[0-9a-f]{{64}}$", dockerfile, re.MULTILINE)
+    pins = {}
+    for name in ("PYTHON", "PYTHON_BUILD", "UV"):
+        pinned = re.search(rf"^ARG {name}=(\S+)@sha256:[0-9a-f]{{64}}$", dockerfile, re.MULTILINE)
         assert pinned is not None, name
+        pins[name] = pinned[1]
+    # The venv is built on the full image and run on the slim one: the same Python minor.
+    assert (
+        pins["PYTHON"].split(":")[1].split("-")[0]
+        == pins["PYTHON_BUILD"].split(":")[1].split("-")[0]
+    )
+    assert "apt-get" not in dockerfile  # nothing unpinned from apt
+
+
+def test_the_image_carries_the_licences() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text("utf-8")
+    commit = re.search(r"^ARG LIVESYNC_COMMIT=([0-9a-f]{40})$", dockerfile, re.MULTILINE)
+    assert commit is not None
+    notices = (ROOT / "THIRD_PARTY_NOTICES").read_text("utf-8")
+    assert commit[1] in notices
+    assert "MPL-2.0" in notices
+    assert "COPY --from=cli /usr/local/LICENSE /usr/share/licenses/node/LICENSE" in dockerfile
+    assert "/usr/share/licenses/obsidian-livesync/LICENSE" in dockerfile
+    assert "MIT License" in (ROOT / "licenses" / "obsidian-livesync.LICENSE").read_text("utf-8")
+    label = re.search(r'org\.opencontainers\.image\.licenses="([^"]+)"', dockerfile)
+    assert label is not None
+    for licence in ("Apache-2.0", "MIT", "MPL-2.0", "PSF-2.0"):
+        assert licence in label[1].split(" AND ")
+    ignored = (ROOT / ".dockerignore").read_text("utf-8").split()
+    assert {"!THIRD_PARTY_NOTICES", "!licenses/", "!LICENSE"} <= set(ignored)
 
 
 def test_the_compose_override_keeps_the_sidecar_locked_down() -> None:
@@ -44,4 +70,10 @@ def test_the_compose_override_keeps_the_sidecar_locked_down() -> None:
     assert "noexec" in sidecar["tmpfs"][0]
     assert sidecar["secrets"] == ["LIVESYNC_COUCHDB_PASSWORD", "LIVESYNC_E2EE_PASSPHRASE"]
     assert "ports" not in sidecar
+    assert sidecar["init"] is True
+    assert sidecar["platform"] == "linux/amd64"
+    # HORAE_LIVESYNC_REF has no default: an update is always a deliberate pin.
+    assert ":?" in sidecar["image"]
+    assert ":?" in sidecar["build"]["context"]
+    assert ":-" not in sidecar["image"] + sidecar["build"]["context"]
     assert "livesync-status:/livesync-status:ro" in document["services"]["horae"]["volumes"]

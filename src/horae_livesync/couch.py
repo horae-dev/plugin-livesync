@@ -10,7 +10,10 @@ the count is an estimate, exact on a single node.
 
 No ambient proxy, no redirect, at most 1 MiB per answer. Errors are classes
 (`unauthorized`, `forbidden`, `database_missing`, `http_<code>`, `tls_error`, `timeout`,
-`unreachable`, `bad_response`), never a message from the server.
+`unreachable`, `bad_response`), never a message from the server, and `probe` never raises.
+
+AUTH_ERRORS are the answers that mean the credentials are refused: the supervisor then stops
+using them for `health.auth_retry_s` (CouchDB locks a user out after repeated failures).
 """
 
 import base64
@@ -24,6 +27,7 @@ from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, OpenerDirector, ProxyHandler, Request, build_opener
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+AUTH_ERRORS = frozenset({"unauthorized", "forbidden"})
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -103,7 +107,9 @@ class CouchProbe:
             if isinstance(exc.reason, TimeoutError):
                 return Probe(False, "timeout")
             return Probe(False, "unreachable")
-        except (OSError, ValueError):
+        except Exception:
+            # Anything else (a truncated answer, `http.client.IncompleteRead`, bad JSON, a
+            # protocol error) is a bad response: the probe never raises.
             return Probe(False, "bad_response")
 
     def _checkpoint(self, local_id: str) -> int | None:

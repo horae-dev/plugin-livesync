@@ -2,6 +2,7 @@
 """The CouchDB probe, against a small fake CouchDB on loopback."""
 
 import base64
+import http.client
 import json
 import socket
 import ssl
@@ -121,6 +122,9 @@ class _Raising:
         (URLError(TimeoutError()), "timeout"),
         (URLError(ssl.SSLError()), "tls_error"),
         (OSError(), "bad_response"),
+        (http.client.IncompleteRead(b"{", 10), "bad_response"),
+        (http.client.RemoteDisconnected("closed"), "bad_response"),
+        (RuntimeError("anything"), "bad_response"),
     ],
 )
 def test_transport_errors(error: BaseException, expected: str) -> None:

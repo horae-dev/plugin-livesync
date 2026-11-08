@@ -6,7 +6,8 @@ vault folder and writes `status.json` into a directory it shares with Horae. Thi
 that file and returns the health (`horae_livesync.status.evaluate`): whether the CLI is live,
 CouchDB answers, when replication last succeeded and how far behind it is. It proposes no
 intent and connects to nothing: a pipeline uses its data (a line in the morning note, a
-`notify` when unhealthy).
+`notify` when unhealthy), and a consumer that deletes or undoes in the vault folder checks
+`live` first (a deletion made while the sidecar is down can be undone by its next start).
 
 **Paths.** The status directory is the plugin's single `paths.read` entry as approved in
 `horae.lock` (the manifest asks for none, as plugin-obsidian does for the vault). The file is
@@ -50,14 +51,24 @@ def build() -> Plugin:
     )
 
     @plugin.source(f"{NAME}.status")
-    async def status_source(call: Call, max_lag_s: int = 300, max_age_s: int = 120) -> Output:
-        if not 0 < max_lag_s <= 86400 or not 0 < max_age_s <= 86400:
-            raise PluginError("max_lag_s and max_age_s must be 1 to 86400 seconds")
+    async def status_source(
+        call: Call, max_lag_s: int | None = None, max_age_s: int | None = None
+    ) -> Output:
+        """The sidecar's health. `max_lag_s` and `max_age_s` default to the thresholds of
+        `livesync.yaml` (written into the status); `max_age_s` may not be under 3 probe
+        intervals. `live` is false while the sidecar is down: refuse to delete or undo in the
+        vault then (README, "Known limitation: deletions while the sidecar is down")."""
+        for value in (max_lag_s, max_age_s):
+            if value is not None and not 0 < value <= 86400:
+                raise PluginError("max_lag_s and max_age_s must be 1 to 86400 seconds")
         directory = status_dir(call.paths)
         try:
             document: dict[str, Any] | None = await asyncio.to_thread(status.read, directory)
         except ValueError:
             document = {"schema_version": None}
+        minimum = status.GRACE_PROBES * status.probe_interval(document)
+        if max_age_s is not None and max_age_s < minimum:
+            raise PluginError(f"max_age_s must be at least 3 probe intervals ({minimum} s)")
         health = status.evaluate(
             document, datetime.now(UTC), max_lag_s=max_lag_s, max_age_s=max_age_s
         )

@@ -3,5 +3,7 @@
 !uv.lock
 !README.md
 !LICENSE
+!THIRD_PARTY_NOTICES
+!licenses/
 !src/
 **/__pycache__

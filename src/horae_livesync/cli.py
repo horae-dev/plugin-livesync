@@ -3,9 +3,11 @@
 
     horae-livesync run     [--config F] [--verbose-log]
                                           render the CLI settings, run the daemon, report
-    horae-livesync check   [--config F]   validate livesync.yaml and resolve its secrets
+    horae-livesync check   [--config F]   validate livesync.yaml (its `settings` against the
+                                          pinned CLI too) and resolve its secrets
     horae-livesync health  [--status-dir D] [--max-lag-s N] [--max-age-s N] [--json]
-                                          exit 0 when healthy, 1 otherwise (HEALTHCHECK)
+                                          exit 0 when healthy, 1 otherwise (HEALTHCHECK); the
+                                          thresholds default to livesync.yaml's (in the status)
 
 Exit codes: 0 ok, 1 unhealthy, 2 usage error, 78 configuration refused (EX_CONFIG).
 Nothing it prints holds a secret value.
@@ -16,16 +18,21 @@ import contextlib
 import json
 import os
 import signal
+import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 from horae_livesync import config, status
 from horae_livesync.secrets import SecretError
-from horae_livesync.supervisor import EX_CONFIG, Layout, Supervisor
+from horae_livesync.supervisor import DEFAULT_CLI, EX_CONFIG, Layout, Supervisor, cli_defaults
 
 DEFAULT_CONFIG = "/config/livesync.yaml"
+CLI_COMMAND: Sequence[str] = DEFAULT_CLI
+"""The LiveSync CLI `check` asks for its default settings (the image's; tests change it)."""
+EX_USAGE = 2
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -49,8 +56,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     health = commands.add_parser("health", help="exit 0 when the last status is healthy")
     health.add_argument("--status-dir", default="/status")
-    health.add_argument("--max-lag-s", type=int, default=300)
-    health.add_argument("--max-age-s", type=int, default=120)
+    health.add_argument("--max-lag-s", type=int, default=None, help="default: livesync.yaml's")
+    health.add_argument("--max-age-s", type=int, default=None, help="default: livesync.yaml's")
     health.add_argument("--json", action="store_true", help="print the health as JSON")
     return parser
 
@@ -65,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolver = loaded.resolver()
             resolver.resolve(loaded.couchdb.password_secret)
             resolver.resolve(loaded.passphrase_secret)
+            _check_settings(loaded)
             print("livesync.yaml and its secrets are valid")
             return 0
     except (config.ConfigError, SecretError) as exc:
@@ -86,6 +94,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     return supervisor.run()
 
 
+def _check_settings(loaded: config.Config) -> None:
+    """`settings` against the pinned CLI's own defaults (names and types), as `run` does."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="livesync-check-") as private:
+            defaults = cli_defaults(CLI_COMMAND, Path(private), os.environ)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise config.ConfigError(
+            f"cannot ask the LiveSync CLI for its settings ({type(exc).__name__})"
+        ) from None
+    config.render_settings(defaults, loaded, "check-only", "check-only")
+
+
 def _config_error_status(directory: Path, message: str) -> None:
     document = status.new_status(os.environ.get("LIVESYNC_CLI_VERSION", "unknown"))
     document["process"]["state"] = "config_error"
@@ -99,6 +119,15 @@ def _health(args: argparse.Namespace) -> int:
         document = status.read(args.status_dir)
     except ValueError:
         document = {"schema_version": None}
+    for name in ("max_lag_s", "max_age_s"):
+        value = getattr(args, name)
+        if value is not None and not 0 < value <= 86400:
+            print(f"--{name.replace('_', '-')} must be 1 to 86400 seconds", file=sys.stderr)
+            return EX_USAGE
+    minimum = status.GRACE_PROBES * status.probe_interval(document)
+    if args.max_age_s is not None and args.max_age_s < minimum:
+        print(f"--max-age-s must be at least 3 probe intervals ({minimum} s)", file=sys.stderr)
+        return EX_USAGE
     health = status.evaluate(
         document, datetime.now(UTC), max_lag_s=args.max_lag_s, max_age_s=args.max_age_s
     )

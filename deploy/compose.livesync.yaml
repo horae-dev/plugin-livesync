@@ -7,18 +7,32 @@
 # status (/livesync-status, read-only). Then, in horae.lock: plugin-obsidian's paths.write is
 # /vault and plugin-livesync's paths.read is /livesync-status. README "Deploying".
 #
-# Needed in .env: HORAE_LIVESYNC_CONFIG (the livesync.yaml file), HORAE_SECRETS_DIR (already
-# used by the core: the two secret files below live there, readable by uid 10001).
+# Needed in .env: HORAE_LIVESYNC_REF (a commit of plugin-livesync: no default, so an update
+# is always a deliberate pin), HORAE_LIVESYNC_CONFIG (the livesync.yaml file),
+# HORAE_SECRETS_DIR (already used by the core: the two secret files below live there,
+# readable by uid 10001). Use a dedicated CouchDB user for the sidecar (README, "Deploying").
+#
+# KNOWN LIMITATION, deletions while the sidecar is down (README): the CLI rescans the vault
+# folder against its local database on every start (each container or CLI restart). A file
+# that was there at the previous start and is deleted while the sidecar is down IS deleted in
+# CouchDB, on every device, when it starts again; a file created after the previous start and
+# deleted while it is down is RESTORED from CouchDB. Delete notes through Obsidian, or in the
+# folder only while the sidecar is up (`livesync.status` reports `live`).
 services:
   livesync:
-    # No published image yet: built from this repository at a commit you pin (README).
-    image: "horae-livesync:${HORAE_LIVESYNC_REF:-main}"
+    # No published image yet: built from this repository at the commit you pin (README).
+    image: "horae-livesync:${HORAE_LIVESYNC_REF:?set HORAE_LIVESYNC_REF to a plugin-livesync commit}"
     build:
-      context: "https://github.com/horae-dev/plugin-livesync.git#${HORAE_LIVESYNC_REF:-main}"
+      context: "https://github.com/horae-dev/plugin-livesync.git#${HORAE_LIVESYNC_REF:?set HORAE_LIVESYNC_REF to a plugin-livesync commit}"
+    platform: linux/amd64
     restart: unless-stopped
+    # An init process as PID 1: it reaps whatever the Node.js CLI leaves behind and forwards
+    # SIGTERM to horae-livesync.
+    init: true
     user: "10001:10001"
     read_only: true
-    # The rendered CLI settings (credentials, passphrase) live here, 0600: memory only.
+    # The rendered CLI settings (credentials, passphrase) live here, 0600: in memory for the
+    # container's lifetime (tmpfs pages can still be swapped out; README, "Configuration").
     tmpfs:
       - "/tmp:size=64m,noexec,nosuid,nodev"
     pids_limit: 256
@@ -27,6 +41,8 @@ services:
     security_opt:
       - "no-new-privileges:true"
     stop_grace_period: 30s
+    # The image's HEALTHCHECK allows 5 min for the first fetch. For a large vault, raise it:
+    #   healthcheck: { start_period: 1h }
     environment:
       TZ: "${TZ:-UTC}"
     volumes:

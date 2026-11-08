@@ -6,16 +6,23 @@ every probe; Horae's `livesync.status` source and the container's health check r
 call `evaluate`. Schema (version 1), times as UTC ISO 8601 strings or null:
 
     updated_at              when the sidecar last wrote the file (stale = the sidecar is down)
+    started_at              when the sidecar started (the grace periods count from it)
     cli_version             the pinned Self-hosted LiveSync CLI
+    thresholds              probe_interval_s, max_age_s, max_lag_s from `livesync.yaml`
     process.state           starting | initial_replication | live | exited | config_error
+                            | auth_failed (credentials refused: waiting `remote.retry_at`)
     process.started_at, restarts, last_exit_code, last_exit_at
+    process.log_reader_error    the sidecar stopped reading the CLI's output (an error class)
     remote.ok               the last probe of the CouchDB database succeeded (null: not yet)
     remote.checked_at, last_ok_at, error, update_seq (numeric part of the database update_seq)
+    remote.retry_at         credentials refused: when they are tried again (null otherwise)
     replication.last_ok_at  last successful replication request of the CLI
     replication.last_error_at, last_error
+    replication.failing_since   the first error since the last success (null: not failing)
     replication.checkpoint_seq  the CLI's pull checkpoint on the remote (numeric part)
     replication.pending     remote changes the CLI has not checkpointed yet (null: unknown)
-    replication.pending_since   when `pending` last went from 0 to more
+    replication.pending_since   while `pending` > 0: when the checkpoint last moved (or when
+                            `pending` went from 0 to more); the lag counts from it
     files.in, files.out     files written to the vault / sent to CouchDB since the start
     config_error            why the configuration was refused (no value in it)
 """
@@ -31,7 +38,14 @@ from typing import Any
 SCHEMA_VERSION = 1
 STATUS_FILE = "status.json"
 MAX_STATUS_BYTES = 64 * 1024
-STATES = ("starting", "initial_replication", "live", "exited", "config_error")
+STATES = ("starting", "initial_replication", "live", "exited", "config_error", "auth_failed")
+DEFAULT_PROBE_INTERVAL_S = 30
+DEFAULT_MAX_LAG_S = 300
+DEFAULT_MAX_AGE_S = 120
+MAX_FUTURE_S = 60
+"""An `updated_at` further in the future than this is not believed (a skewed clock)."""
+GRACE_PROBES = 3
+"""How many probe intervals after the sidecar's start an unknown lag is only a warning."""
 
 
 def now_iso(now: datetime | None = None) -> str:
@@ -47,17 +61,29 @@ def parse_time(value: object) -> datetime | None:
         return None
 
 
-def new_status(cli_version: str) -> dict[str, Any]:
+def new_status(
+    cli_version: str, thresholds: Mapping[str, int] | None = None, started_at: str | None = None
+) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "updated_at": now_iso(),
+        "started_at": started_at or now_iso(),
         "cli_version": cli_version,
+        "thresholds": dict(
+            thresholds
+            or {
+                "probe_interval_s": DEFAULT_PROBE_INTERVAL_S,
+                "max_age_s": DEFAULT_MAX_AGE_S,
+                "max_lag_s": DEFAULT_MAX_LAG_S,
+            }
+        ),
         "process": {
             "state": "starting",
             "started_at": None,
             "restarts": 0,
             "last_exit_code": None,
             "last_exit_at": None,
+            "log_reader_error": None,
         },
         "remote": {
             "ok": None,
@@ -65,11 +91,13 @@ def new_status(cli_version: str) -> dict[str, Any]:
             "last_ok_at": None,
             "error": None,
             "update_seq": None,
+            "retry_at": None,
         },
         "replication": {
             "last_ok_at": None,
             "last_error_at": None,
             "last_error": None,
+            "failing_since": None,
             "checkpoint_seq": None,
             "pending": None,
             "pending_since": None,
@@ -140,69 +168,132 @@ def _word(value: object, limit: int = 64) -> str | None:
     return None
 
 
+def _positive(value: object) -> int | None:
+    count = _count(value)
+    return count if count else None
+
+
+def probe_interval(status: Mapping[str, Any] | None) -> int:
+    """The sidecar's probe interval, from the status's `thresholds` (or the default)."""
+    thresholds = _section(status or {}, "thresholds")
+    return _positive(thresholds.get("probe_interval_s")) or DEFAULT_PROBE_INTERVAL_S
+
+
 def evaluate(
     status: Mapping[str, Any] | None,
     now: datetime,
     *,
-    max_lag_s: int = 300,
-    max_age_s: int = 120,
+    max_lag_s: int | None = None,
+    max_age_s: int | None = None,
 ) -> dict[str, Any]:
-    """Health from a status document. `healthy` is false with one `problems` code per reason:
-    `status_missing`, `status_invalid`, `status_stale`, `config_error`, `not_live`,
-    `remote_unreachable` (or the probe's error), `lagging`; `warnings` holds `lag_unknown`."""
+    """Health from a status document. `max_lag_s` and `max_age_s` default to the status's own
+    `thresholds` (from `livesync.yaml`). `healthy` is false with one `problems` code per reason:
+
+    - `status_missing`, `status_invalid`, `status_stale` (older than `max_age_s`, or more than
+      60 s in the future), `config_error`, `not_live`;
+    - the probe's error (`unauthorized`, `forbidden`, `timeout`...) or `remote_unreachable`;
+    - the CLI's replication error (`initial_replication_failed`, `unreachable`...) when it is
+      newer than its last success and has lasted more than one probe interval (at once when
+      the CLI is not live), else the warning `replication_retrying`;
+    - `lagging`: remote changes pending and the CLI's checkpoint has not moved for `max_lag_s`;
+    - `lag_unknown`: the lag cannot be measured more than 3 probe intervals after the
+      sidecar's start (a warning before);
+    - `sync_stale`: the CLI's last successful replication request is older than `max_lag_s`
+      while the copy is not known to be current (changes pending for more than a probe
+      interval, or an unknown lag past the grace);
+    - `log_reader_failed`: the sidecar stopped reading the CLI's output.
+
+    `live` is true when the status is fresh and the CLI is live: consumers that act on the
+    vault folder (an undo, a delete) refuse when it is false (README, "Deploying")."""
     problems: list[str] = []
     warnings: list[str] = []
+
+    def problem(code: str) -> None:
+        if code not in problems:
+            problems.append(code)
+
     if status is None:
-        return {"healthy": False, "problems": ["status_missing"], "warnings": []}
+        return {"healthy": False, "live": False, "problems": ["status_missing"], "warnings": []}
     if status.get("schema_version") != SCHEMA_VERSION:
-        return {"healthy": False, "problems": ["status_invalid"], "warnings": []}
+        return {"healthy": False, "live": False, "problems": ["status_invalid"], "warnings": []}
     process, remote, replication = (
         _section(status, n) for n in ("process", "remote", "replication")
     )
-    files = _section(status, "files")
+    files, thresholds = _section(status, "files"), _section(status, "thresholds")
+    probe = probe_interval(status)
+    max_lag = max_lag_s or _positive(thresholds.get("max_lag_s")) or DEFAULT_MAX_LAG_S
+    max_age = max_age_s or _positive(thresholds.get("max_age_s")) or DEFAULT_MAX_AGE_S
 
     updated = parse_time(status.get("updated_at"))
+    if updated is not None and (updated - now).total_seconds() > MAX_FUTURE_S:
+        updated = None
     age = None if updated is None else max(0, int((now - updated).total_seconds()))
-    if age is None or age > max_age_s:
-        problems.append("status_stale")
+    stale = age is None or age > max_age
+    if stale:
+        problem("status_stale")
     state = process.get("state") if process.get("state") in STATES else None
     if state == "config_error":
-        problems.append("config_error")
+        problem("config_error")
     elif state != "live":
-        problems.append("not_live")
+        problem("not_live")
     if remote.get("ok") is not True:
-        problems.append(_word(remote.get("error"), 32) or "remote_unreachable")
+        problem(_word(remote.get("error"), 32) or "remote_unreachable")
+    if process.get("log_reader_error") is not None:
+        problem("log_reader_failed")
 
+    last_ok = parse_time(replication.get("last_ok_at"))
+    last_error = parse_time(replication.get("last_error_at"))
+    if last_error is not None and (last_ok is None or last_error > last_ok):
+        failing_since = parse_time(replication.get("failing_since")) or last_error
+        if state != "live" or (now - failing_since).total_seconds() > probe:
+            problem(_word(replication.get("last_error"), 32) or "replication_error")
+        else:
+            warnings.append("replication_retrying")
+
+    started = parse_time(status.get("started_at"))
+    past_grace = started is None or (now - started).total_seconds() > GRACE_PROBES * probe
     pending = _count(replication.get("pending"))
     since = parse_time(replication.get("pending_since"))
     lag = None
     if pending is None:
-        warnings.append("lag_unknown")
+        if past_grace:
+            problem("lag_unknown")
+        else:
+            warnings.append("lag_unknown")
     elif pending == 0:
         lag = 0
     elif since is not None:
         lag = max(0, int((now - since).total_seconds()))
-        if lag > max_lag_s:
-            problems.append("lagging")
+        if lag > max_lag:
+            problem("lagging")
+    # Not current: the lag is unknown (past the grace), or changes have been pending for more
+    # than a probe interval (an idle live feed makes no request, so a quiet but current copy
+    # is never stale).
+    not_current = (pending is None and past_grace) or (lag is not None and lag > probe)
+    if not_current and (last_ok is None or (now - last_ok).total_seconds() > max_lag):
+        problem("sync_stale")
 
-    last_sync = parse_time(replication.get("last_ok_at"))
     return {
         "healthy": not problems,
+        "live": state == "live" and not stale,
         "problems": problems,
         "warnings": warnings,
         "state": state,
         "status_age_s": age,
-        "last_sync_at": None if last_sync is None else now_iso(last_sync),
+        "last_sync_at": None if last_ok is None else now_iso(last_ok),
         "lag_s": lag,
         "pending_changes": pending,
         "remote_ok": remote.get("ok") is True,
         "remote_last_ok_at": _iso(remote.get("last_ok_at")),
+        "remote_retry_at": _iso(remote.get("retry_at")),
         "last_error_at": _iso(replication.get("last_error_at")),
         "last_error": _word(replication.get("last_error"), 32),
         "files_in": _count(files.get("in")),
         "files_out": _count(files.get("out")),
         "restarts": _count(process.get("restarts")),
         "cli_version": _word(status.get("cli_version")),
+        "max_lag_s": max_lag,
+        "max_age_s": max_age,
     }
 
 
