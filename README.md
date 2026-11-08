@@ -4,9 +4,9 @@
 
 Horae plugin: keep an Obsidian vault as plain files on the server with Self-hosted LiveSync (E2EE CouchDB).
 
-> 🚧 **In progress.** The sidecar and its health source are in (#2). The E2EE parity check
-> with the Obsidian plugin (#3), the nightly git snapshot (#4) and the setup and recovery
-> guide (#5) are not. Follow progress on the [Horae roadmap project](https://github.com/orgs/horae-dev/projects/1).
+> 🚧 **In progress.** The sidecar and its health source are in (#2), as are the nightly git
+> snapshot (#4) and the [setup and recovery guide](docs/setup.md) (#5). The E2EE parity check
+> with the Obsidian plugin (#3) is not. Follow progress on the [Horae roadmap project](https://github.com/orgs/horae-dev/projects/1).
 
 ## What it does
 
@@ -244,7 +244,7 @@ docker compose exec livesync horae-livesync health
 
 On **Coolify** (PLAN §7), add the same service to Horae's compose resource; secrets can be
 Coolify variables referenced with `secrets.refs: {LIVESYNC_COUCHDB_PASSWORD: {env: ...}}`
-(the sidecar never passes its environment to the CLI). The full guide is #5.
+(the sidecar never passes its environment to the CLI). The full guide is [docs/setup.md](docs/setup.md).
 
 Point the sidecar at an **empty** vault volume the first time: it then fetches everything. A
 vault folder that already has files is merged both ways by the startup scan. The image's
