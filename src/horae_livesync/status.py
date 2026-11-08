@@ -25,6 +25,11 @@ call `evaluate`. Schema (version 1), times as UTC ISO 8601 strings or null:
                             `pending` went from 0 to more); the lag counts from it
     files.in, files.out     files written to the vault / sent to CouchDB since the start
     config_error            why the configuration was refused (no value in it)
+    snapshot                the nightly git snapshot (README, "Snapshots"); it never affects
+                            the health: enabled, next_at, last_at (the last attempt),
+                            last_ok_at, commit (the new commit, null when nothing changed),
+                            files, changes (added + modified + deleted), skipped, error (a
+                            class name; null when the last attempt worked)
 """
 
 import json
@@ -103,6 +108,17 @@ def new_status(
             "pending_since": None,
         },
         "files": {"in": 0, "out": 0},
+        "snapshot": {
+            "enabled": False,
+            "next_at": None,
+            "last_at": None,
+            "last_ok_at": None,
+            "commit": None,
+            "files": None,
+            "changes": None,
+            "skipped": None,
+            "error": None,
+        },
         "config_error": None,
     }
 

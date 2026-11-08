@@ -190,6 +190,24 @@ class CouchDB:
 
 
 @dataclass(frozen=True, slots=True)
+class Snapshot:
+    """`snapshot:` (horae_livesync.snapshot): off unless enabled."""
+
+    enabled: bool = False
+    time: str = "03:00"
+    """Local time (the container's TZ) of the nightly run."""
+    path: Path = Path("/snapshots/vault.git")
+    exclude: tuple[str, ...] = (
+        ".obsidian/workspace*",
+        ".obsidian/cache",
+        ".trash/",
+        ".git/",
+    )
+    max_file_mb: int = 64
+    gc: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     couchdb: CouchDB
     passphrase_secret: str
@@ -204,6 +222,7 @@ class Config:
     settings: Mapping[str, Any] = field(default_factory=dict)
     secrets_dir: Path = Path("/run/secrets")
     secret_refs: Mapping[str, SecretRef] = field(default_factory=dict)
+    snapshot: Snapshot = field(default_factory=Snapshot)
 
     def resolver(self, environ: Mapping[str, str] | None = None) -> SecretResolver:
         return SecretResolver(self.secrets_dir, self.secret_refs, environ)
@@ -228,7 +247,7 @@ def parse(document: object) -> Config:
     root = _mapping(
         document,
         "the file",
-        {"schema_version", "couchdb", "e2ee", "sync", "health", "settings", "secrets"},
+        {"schema_version", "couchdb", "e2ee", "sync", "health", "settings", "secrets", "snapshot"},
     )
     if root.get("schema_version", SCHEMA_VERSION) != SCHEMA_VERSION or isinstance(
         root.get("schema_version"), bool
@@ -277,6 +296,7 @@ def parse(document: object) -> Config:
         settings=_settings(root.get("settings", {})),
         secrets_dir=_secrets_dir(secrets.get("dir", "/run/secrets")),
         secret_refs=_refs(secrets.get("refs", {})),
+        snapshot=_snapshot(root.get("snapshot", {})),
     )
 
 
@@ -404,6 +424,41 @@ def _settings(value: object) -> dict[str, Any]:
             )
         allowed.check(key, item)
     return value
+
+
+_TIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+
+
+def _snapshot(value: object) -> Snapshot:
+    block = _mapping(value, "snapshot", {"enabled", "time", "path", "exclude", "max_file_mb", "gc"})
+    defaults = Snapshot()
+    enabled, gc = block.get("enabled", False), block.get("gc", False)
+    if not isinstance(enabled, bool) or not isinstance(gc, bool):
+        raise ConfigError("snapshot.enabled and snapshot.gc must be true or false")
+    at = block.get("time", defaults.time)
+    if not isinstance(at, str) or not _TIME.fullmatch(at):
+        raise ConfigError("snapshot.time must be a local time HH:MM")
+    path = block.get("path", str(defaults.path))
+    if not isinstance(path, str) or not path.startswith("/") or ".." in path.split("/"):
+        raise ConfigError("snapshot.path must be an absolute path")
+    exclude = block.get("exclude", list(defaults.exclude))
+    if not isinstance(exclude, list) or len(exclude) > 100:
+        raise ConfigError("snapshot.exclude must be a list of up to 100 patterns")
+    for pattern in exclude:
+        if not isinstance(pattern, str) or not pattern.strip("/") or len(pattern) > 256:
+            raise ConfigError("snapshot.exclude: each pattern must be a non-empty string")
+        if pattern.startswith("/") or ".." in pattern.split("/"):
+            raise ConfigError("snapshot.exclude: patterns are relative to the vault")
+    return Snapshot(
+        enabled=enabled,
+        time=at,
+        path=Path(path),
+        exclude=tuple(exclude),
+        max_file_mb=_int(
+            block.get("max_file_mb", defaults.max_file_mb), "snapshot.max_file_mb", 1, 1024
+        ),
+        gc=gc,
+    )
 
 
 def _secrets_dir(value: object) -> Path:

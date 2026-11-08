@@ -35,6 +35,16 @@ health:
 # identity:
 #   pathNormalizationVersion: 0
 settings: {}
+# The nightly git snapshot of the vault (README, "Snapshots"). Off unless enabled; needs the
+# /snapshots volume of compose.livesync.yaml. `time` is local (the container's TZ). Patterns are
+# relative to the vault: `name*` any depth, `a/b` that path, a trailing `/` a folder.
+snapshot:
+  enabled: true
+  time: "03:00"
+  path: /snapshots/vault.git
+  exclude: [".obsidian/workspace*", ".obsidian/cache", ".trash/", ".git/"]
+  max_file_mb: 64      # larger files are left out of the snapshot
+  gc: false            # true: pack the repository after each snapshot
 # As in horae.yaml (schemas decision 25): a secret is the file <dir>/<NAME> unless `refs` says
 # otherwise, e.g. LIVESYNC_COUCHDB_PASSWORD: { env: LIVESYNC_COUCHDB_PASSWORD } on Coolify.
 secrets:

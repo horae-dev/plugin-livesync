@@ -236,3 +236,39 @@ def test_allowed_settings_accept_the_cli_defaults(cli_defaults: dict[str, Any]) 
 def test_render_settings_refuses_odd_defaults(secrets_dir: Path) -> None:
     with pytest.raises(ConfigError, match="default settings"):
         render_settings({}, parse(config_document(secrets_dir)), PASSWORD, PASSPHRASE)
+
+
+def test_snapshot_defaults_to_off_and_is_validated(secrets_dir: Path) -> None:
+    from horae_livesync.config import Snapshot, parse
+
+    assert parse(config_document(secrets_dir)).snapshot == Snapshot()
+    on = parse(
+        config_document(
+            secrets_dir,
+            snapshot={"enabled": True, "time": "23:30", "exclude": ["a/"], "max_file_mb": 5},
+        )
+    ).snapshot
+    assert (on.enabled, on.time, on.exclude, on.max_file_mb) == (True, "23:30", ("a/",), 5)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"enabled": "yes"},
+        {"time": "3am"},
+        {"time": "24:00"},
+        {"path": "relative"},
+        {"path": "/a/../b"},
+        {"exclude": "x"},
+        {"exclude": [""]},
+        {"exclude": ["/abs"]},
+        {"exclude": ["../x"]},
+        {"max_file_mb": 0},
+        {"unknown": 1},
+    ],
+)
+def test_snapshot_refuses_bad_values(secrets_dir: Path, block: dict[str, object]) -> None:
+    from horae_livesync.config import ConfigError, parse
+
+    with pytest.raises(ConfigError):
+        parse(config_document(secrets_dir, snapshot=block))

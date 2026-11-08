@@ -40,11 +40,11 @@ COPY --from=build /opt/venv /opt/venv
 COPY --from=cli /usr/local/LICENSE /usr/share/licenses/node/LICENSE
 COPY licenses/obsidian-livesync.LICENSE /usr/share/licenses/obsidian-livesync/LICENSE
 COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/horae-livesync/
-# One user, 10001 like the Horae image, so the shared vault volume has one owner. The three
+# One user, 10001 like the Horae image, so the shared vault volume has one owner. The four
 # mount points are created 0700 and owned by it: a new named volume mounted there starts so.
 RUN groupadd --gid 10001 horae \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin horae \
-    && install -d -o 10001 -g 10001 -m 0700 /vault /livesync /status \
+    && install -d -o 10001 -g 10001 -m 0700 /vault /livesync /status /snapshots \
     && node /app/dist/index.cjs --help > /dev/null
 ENV PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin HOME=/tmp PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 LIVESYNC_CLI_VERSION=${LIVESYNC_CLI_VERSION}
@@ -58,7 +58,8 @@ LABEL org.opencontainers.image.title="horae-livesync" \
       dev.horae.livesync-cli.commit="${LIVESYNC_COMMIT}"
 USER 10001:10001
 # Mounts: /config (livesync.yaml, read-only), /run/secrets (read-only), /vault, /livesync (the
-# CLI's local database, persistent), /status (shared read-only with Horae), /tmp (a tmpfs:
+# CLI's local database, persistent), /status (shared read-only with Horae), /snapshots (the
+# git snapshots of the vault, persistent), /tmp (a tmpfs:
 # the rendered settings live there, 0600).
 # The thresholds come from livesync.yaml (written into the status). The start period covers the
 # first fetch of a small vault; raise it for a large one (README, "Deploying").

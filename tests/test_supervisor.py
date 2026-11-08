@@ -5,18 +5,19 @@ import base64
 import dataclasses
 import io
 import json
+import os
 import sys
 import threading
 import time
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import pytest
 
-from horae_livesync import status, supervisor
+from horae_livesync import snapshot, status, supervisor
 from horae_livesync.config import parse
 from horae_livesync.couch import Probe
 from horae_livesync.logwatch import Event
@@ -354,3 +355,80 @@ def test_terminate_kills_a_stuck_cli(
     sup._terminate(child)
     assert child.returncode is not None
     assert child.returncode < 0
+
+
+def test_next_snapshot_is_the_next_local_occurrence() -> None:
+    zone = timezone(timedelta(hours=2))
+    after = datetime(2026, 11, 1, 2, 59, tzinfo=zone)
+    assert supervisor.next_snapshot(after, "03:00") == datetime(2026, 11, 1, 1, 0, tzinfo=UTC)
+    after = datetime(2026, 11, 1, 3, 0, tzinfo=zone)  # at the time itself: tomorrow's
+    assert supervisor.next_snapshot(after, "03:00") == datetime(2026, 11, 2, 1, 0, tzinfo=UTC)
+
+
+def snapshot_thread(sup: Supervisor) -> threading.Thread | None:
+    return sup._snapshot_thread
+
+
+def snapshot_supervisor(tmp_path: Path, secrets_dir: Path, **block: Any) -> Supervisor:
+    options = {"enabled": True, "path": str(tmp_path / "snaps" / "vault.git"), **block}
+    sup = make(tmp_path, secrets_dir, snapshot=options)
+    note = tmp_path / "vault" / "note.md"
+    note.write_text("hello\n")
+    os.utime(note, (1.7e9, 1.7e9))  # quiet for a while, as notes are at night
+    return sup
+
+
+def test_the_scheduled_snapshot_is_reported_in_the_status(
+    tmp_path: Path, secrets_dir: Path
+) -> None:
+    sup = snapshot_supervisor(tmp_path, secrets_dir)
+    section = sup.tracker.doc["snapshot"]
+    assert section["enabled"] is True
+    assert section["next_at"] is not None
+    sup._snapshot_if_due()  # not due yet
+    assert snapshot_thread(sup) is None
+    sup._snapshot_at = datetime.now(UTC) - timedelta(seconds=1)
+    sup._snapshot_if_due()
+    thread = snapshot_thread(sup)
+    assert thread is not None
+    thread.join(30)
+    section = sup.tracker.snapshot()["snapshot"]
+    assert section["error"] is None
+    assert section["last_ok_at"] == section["last_at"] is not None
+    assert (section["files"], section["changes"], section["commit"] is not None) == (1, 1, True)
+    assert "vault snapshot done" in output(sup)
+    assert sup._snapshot_at is not None
+    assert sup._snapshot_at > datetime.now(UTC)  # the next night
+
+
+def test_a_failed_snapshot_does_not_touch_the_health(tmp_path: Path, secrets_dir: Path) -> None:
+    sup = snapshot_supervisor(tmp_path, secrets_dir)
+    (tmp_path / "vault").rename(tmp_path / "gone")
+    sup._snapshot_job()
+    document = sup.tracker.snapshot()
+    assert document["snapshot"]["error"] == "the vault folder does not exist"
+    assert document["snapshot"]["last_ok_at"] is None
+    assert "vault snapshot failed" in output(sup)
+    # The sync problems come from the sync alone: a snapshot failure adds none.
+    assert "snapshot" not in " ".join(status.evaluate(document, datetime.now(UTC))["problems"])
+
+
+def test_an_unexpected_snapshot_error_is_reported_by_class(
+    tmp_path: Path, secrets_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sup = snapshot_supervisor(tmp_path, secrets_dir)
+
+    def boom(*_: object, **__: object) -> None:
+        raise PermissionError("/secret/path")
+
+    monkeypatch.setattr(snapshot, "take", boom)
+    sup._snapshot_job()
+    assert sup.tracker.doc["snapshot"]["error"] == "PermissionError"
+    assert "/secret/path" not in output(sup)
+
+
+def test_a_disabled_snapshot_never_runs(tmp_path: Path, secrets_dir: Path) -> None:
+    sup = make(tmp_path, secrets_dir)
+    assert sup.tracker.doc["snapshot"]["enabled"] is False
+    sup._snapshot_if_due()
+    assert sup._snapshot_thread is None
