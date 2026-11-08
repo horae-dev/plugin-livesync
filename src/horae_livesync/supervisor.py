@@ -17,7 +17,11 @@
    every few seconds would keep it locked (and lock out the Obsidian clients sharing that
    user). The state is `auth_failed`, with `remote.error` and `remote.retry_at`; then one
    probe tries again, and the CLI starts only if it passes.
-6. On SIGTERM or SIGINT: stop the CLI (SIGTERM, then SIGKILL after 20 s), write the final
+6. **Snapshots.** When `snapshot.enabled`, once a day at `snapshot.time` (local time) a thread
+   commits the vault into the snapshot repository (`snapshot`); the result goes into the
+   status (`snapshot` section) and never into the health. The first run is the next
+   occurrence of that time after the start.
+7. On SIGTERM or SIGINT: stop the CLI (SIGTERM, then SIGKILL after 20 s), write the final
    status and exit 0.
 """
 
@@ -37,7 +41,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
-from horae_livesync import logwatch, status
+from horae_livesync import logwatch, snapshot, status
 from horae_livesync.config import Config, ConfigError, render_settings
 from horae_livesync.couch import AUTH_ERRORS, CouchProbe, Probe
 from horae_livesync.secrets import SecretError
@@ -152,6 +156,24 @@ class Tracker:
         self.doc["process"]["state"] = "config_error"
         self.doc["config_error"] = message[:300]
 
+    def snapshot_scheduled(self, enabled: bool, next_at: datetime | None) -> None:
+        self.doc["snapshot"].update(
+            enabled=enabled, next_at=None if next_at is None else status.now_iso(next_at)
+        )
+
+    def snapshot_done(self, result: snapshot.Result | None, error: str | None) -> None:
+        at = status.now_iso(self.now())
+        section = self.doc["snapshot"]
+        section.update(last_at=at, error=error)
+        if result is not None:
+            section.update(
+                last_ok_at=at,
+                commit=result.commit,
+                files=result.files,
+                changes=result.added + result.modified + result.deleted,
+                skipped=result.skipped,
+            )
+
     def snapshot(self) -> dict[str, Any]:
         self.doc["updated_at"] = status.now_iso(self.now())
         snapshot: dict[str, Any] = json.loads(json.dumps(self.doc))
@@ -199,6 +221,15 @@ def cli_defaults(cli: Sequence[str], private: Path, environ: Mapping[str, str]) 
     return defaults
 
 
+def next_snapshot(after: datetime, at: str) -> datetime:
+    """The next occurrence of local time `at` ("HH:MM") strictly after `after` (aware, local)."""
+    hour, minute = int(at[:2]), int(at[3:])
+    candidate = after.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= after:
+        candidate = (candidate + timedelta(days=1)).replace(hour=hour, minute=minute)
+    return candidate.astimezone(UTC)
+
+
 class Supervisor:
     def __init__(
         self,
@@ -227,6 +258,11 @@ class Supervisor:
         self.stopping = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
+        self._snapshot_thread: threading.Thread | None = None
+        self._snapshot_at: datetime | None = None
+        if config.snapshot.enabled:
+            self._snapshot_at = next_snapshot(datetime.now().astimezone(), config.snapshot.time)
+        self.tracker.snapshot_scheduled(config.snapshot.enabled, self._snapshot_at)
 
     def log(self, message: str) -> None:
         with self._lock:
@@ -382,6 +418,7 @@ class Supervisor:
                     attempt += 1
                 if child is None and now >= restart_at:
                     child = self._start(command)
+            self._snapshot_if_due()
             self.write_status()
             wait = float(self.config.probe_interval_s)
             if hold_until is not None:
@@ -397,6 +434,43 @@ class Supervisor:
         else:
             self.write_status()
         return 0
+
+    def _snapshot_if_due(self) -> None:
+        due = self._snapshot_at
+        if due is None or datetime.now(UTC) < due:
+            return
+        if self._snapshot_thread is not None and self._snapshot_thread.is_alive():
+            return
+        self._snapshot_at = next_snapshot(datetime.now().astimezone(), self.config.snapshot.time)
+        with self._lock:
+            self.tracker.snapshot_scheduled(True, self._snapshot_at)
+        self._snapshot_thread = threading.Thread(target=self._snapshot_job, daemon=True)
+        self._snapshot_thread.start()
+
+    def _snapshot_job(self) -> None:
+        """One snapshot, off the main loop (a big vault takes a while; the probes go on)."""
+        options = self.config.snapshot
+        result: snapshot.Result | None = None
+        error: str | None = None
+        try:
+            result = snapshot.take(
+                self.layout.vault,
+                options.path,
+                exclude=options.exclude,
+                max_file_mb=options.max_file_mb,
+                gc=options.gc,
+            )
+        except snapshot.SnapshotError as exc:
+            error = str(exc)[:100]
+        except Exception as exc:
+            error = type(exc).__name__
+        with self._lock:
+            self.tracker.snapshot_done(result, error)
+        if error is None:
+            self.log("vault snapshot done" + ("" if result and result.commit else " (no change)"))
+        else:
+            self.log(f"vault snapshot failed ({error})")
+        self.write_status()
 
     def _take_auth_error(self) -> str | None:
         with self._lock:

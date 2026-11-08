@@ -294,6 +294,75 @@ CLI's npm dependencies (one MPL-2.0 package, `mediabunny`, shipped unmodified), 
 obsidian-livesync at the pinned commit, this project) and
 [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES) lists the rest and where each text is.
 
+## Snapshots
+
+LiveSync keeps the vault in sync, not its history: a note deleted or overwritten on one
+device is gone everywhere. The sidecar therefore commits the vault folder **every night** into
+a git repository, for readable history and recovery (`snapshot:` in `livesync.yaml`; off
+unless `enabled: true`).
+
+- **Where.** A bare repository on its own volume, `/snapshots/vault.git` (`livesync-snapshots`
+  in the compose override; add it to your backups). Nothing is written into the vault, which
+  never has a `.git`. It is an ordinary git repository: `git --git-dir <volume>/vault.git log`
+  works on the host.
+- **Why not `git`.** The final image has no `git` (it is in the build stage only) and the
+  build installs nothing from apt, so the snapshot uses the pure-Python `dulwich`
+  (Apache-2.0), and `horae-livesync` provides the list and restore commands below.
+- **When.** The sidecar runs it daily at `snapshot.time` (local time, `TZ` of the container;
+  the first run is the next occurrence after the start; a sidecar that is down at that time
+  skips the night). It runs in a thread, so the health probes go on. This is the primary
+  path. The alternative is a Coolify *Scheduled Task* (or host cron) on the container, with
+  `snapshot.enabled: false`: `docker compose exec -T livesync horae-livesync snapshot --json`
+  (exit 0 done, 1 failed, 75 another snapshot is running); it does not appear in `status.json`.
+- **What.** Every file, except `snapshot.exclude` (by default Obsidian's churn:
+  `.obsidian/workspace*`, `.obsidian/cache`, `.trash/`), symbolic links, and files over
+  `max_file_mb` (64). Binary files are stored as they are. Nothing is committed when the vault
+  is the same as in the last snapshot. A commit has a fixed author (`Horae LiveSync`) and a
+  message with the UTC time and the counts: `Vault snapshot 2026-11-08T03:00:00Z`, then
+  `120 files: 3 added, 2 modified, 1 deleted; 0 skipped`.
+- **While the CLI writes.** Each file is read once and stored from that read, so a stored
+  file is always one real state of it. The CLI may write in place (truncate, then write), so a
+  file modified in the last 2 seconds is not trusted: the previous snapshot's version is kept
+  (a new file is left out), counted in `skipped`, and the next night picks it up. Two
+  snapshots never run at once (a lock in the repository).
+- **Retention.** All snapshots are kept. `gc: true` packs the repository after each snapshot;
+  history only grows with what changes. Pruning is done by hand on the volume with `git`.
+- **Status.** `status.json` gets a `snapshot` section (`enabled`, `next_at`, `last_at`,
+  `last_ok_at`, `commit`, `files`, `changes`, `skipped`, `error`). A failed snapshot sets
+  `error` and a log line; it never makes the sync unhealthy.
+
+### Restore
+
+Stop the sidecar first, so that nothing syncs a half-restored vault (the command refuses while
+`status.json` says the sidecar is `live`, unless `--force`):
+
+```
+docker compose stop livesync
+R="docker compose run --rm --no-deps livesync"     # a one-off container, same volumes
+$R snapshots --limit 20                            # id, UTC time, message, newest first
+$R restore --at 2026-11-01 --dry-run Notes/todo.md # what would change (--at: end of that day, UTC)
+$R restore --at 2026-11-01 Notes/todo.md           # one note (or a folder: Notes/Projects)
+$R restore --commit 3f9a1c2 Notes/todo.md          # from a given snapshot instead
+$R restore --at 2026-11-01T03:30 --mirror          # the whole vault, as it was
+docker compose start livesync
+```
+
+A restore writes the snapshot's version of each file that differs and leaves other files
+alone; `--mirror` also deletes the files (under the given paths) that the snapshot does not
+have, except the excluded ones. Restore into another folder to look first (`--target /tmp/x`
+with the volume mounted, no stop needed). With `git` on the host:
+`git --git-dir vault.git show main~1:Notes/todo.md > todo.md`.
+
+**What happens next.** When the sidecar starts, its startup scan compares the folder with its
+database and pushes the difference to CouchDB, so a restored or recreated note reaches every
+device as a change. A **deletion** made by `--mirror` follows the rule of the
+[known limitation](#known-limitation-deletions-while-the-sidecar-is-down): a file that was
+in the folder at the previous start is deleted in CouchDB and on every device, while one
+created since comes back from CouchDB. Prefer restoring single notes, and use `--mirror` only
+when you accept that. Restoring a note that was deleted on the devices relies on the same
+scan: check in Obsidian that it reappeared, and look at `snapshot`/`livesync.status` before
+relying on it.
+
 ## Design
 
 Decisions taken in review of #2 (maintainer: "go with what's good for the project"):
@@ -313,7 +382,8 @@ Decisions taken in review of #2 (maintainer: "go with what's good for the projec
 - **Secret names and values follow the core's rules** (reserved names, empty and short
   values, `Secret` guards), checked by a contract table mirroring the core's tests.
 - **`HORAE_LIVESYNC_REF` is required**; the build uses no apt package (git comes with the
-  pinned full Python image of the build stage).
+  pinned full Python image of the build stage); the final image has none, so snapshots use
+  `dulwich`.
 - **Thresholds live in `livesync.yaml`** and travel in the status, so the image's
   `HEALTHCHECK` and the plugin agree; `max_age_s` is at least 3 probe intervals.
 - **linux/amd64 only**, an init process as PID 1, licences in the image.

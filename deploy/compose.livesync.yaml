@@ -50,6 +50,9 @@ services:
       - livesync-db:/livesync
       - livesync-vault:/vault
       - livesync-status:/status
+      # The nightly git snapshots of the vault (snapshot: in livesync.yaml, README "Snapshots"):
+      # a bare repository on its own volume, never inside the vault. Back this volume up too.
+      - livesync-snapshots:/snapshots
     # Only the two secrets it needs, at /run/secrets/<NAME> (never the whole secrets dir).
     secrets:
       - LIVESYNC_COUCHDB_PASSWORD
@@ -73,6 +76,7 @@ secrets:
 volumes:
   # The CLI's local PouchDB: keep it (a lost one means a full fetch from CouchDB).
   livesync-db:
-  # The vault as plain files: in the backup set (PLAN §7), snapshots are #4.
+  # The vault as plain files: in the backup set (PLAN §7); its history is in livesync-snapshots.
   livesync-vault:
   livesync-status:
+  livesync-snapshots:

@@ -45,7 +45,7 @@ Python 3.12 (/usr/local, from the python:3.12-slim-bookworm image)
   PSF-2.0. Licence text: /usr/local/lib/python3.12/LICENSE.txt
 
 Python packages of horae-livesync (/opt/venv/lib/python3.12/site-packages)
-  horae-sdk (Apache-2.0), pyyaml (MIT), the MCP SDK and its dependencies
+  horae-sdk (Apache-2.0), pyyaml (MIT), dulwich (Apache-2.0 OR GPL-2.0-or-later; used under Apache-2.0), the MCP SDK and its dependencies
   (pydantic, anyio, httpx2, starlette and others: MIT, BSD-3-Clause,
   Apache-2.0). Each package's licence is in its *.dist-info directory.
 

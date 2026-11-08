@@ -77,3 +77,16 @@ def test_the_compose_override_keeps_the_sidecar_locked_down() -> None:
     assert ":?" in sidecar["build"]["context"]
     assert ":-" not in sidecar["image"] + sidecar["build"]["context"]
     assert "livesync-status:/livesync-status:ro" in document["services"]["horae"]["volumes"]
+
+
+def test_the_snapshots_have_their_own_volume_and_the_example_enables_them() -> None:
+    document: dict[str, Any] = yaml.safe_load(
+        (ROOT / "deploy" / "compose.livesync.yaml").read_text("utf-8")
+    )
+    assert "livesync-snapshots:/snapshots" in document["services"]["livesync"]["volumes"]
+    assert "livesync-snapshots" in document["volumes"]
+    # Never mounted in the vault or shared with Horae.
+    assert not any("snapshots" in v for v in document["services"]["horae"]["volumes"])
+    snapshot = config.load(ROOT / "deploy" / "livesync.example.yaml").snapshot
+    assert snapshot.enabled is True
+    assert str(snapshot.path).startswith("/snapshots/")
