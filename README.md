@@ -117,6 +117,11 @@ The sidecar writes `/status/status.json` after every probe (schema in
   it has been behind. Exact on a single CouchDB node, an estimate on a cluster.
 - **files**: files written to the vault and sent to CouchDB since the start.
 
+The file is rewritten on every probe, so it lags the CLI by up to `probe_interval_s`. The
+container log shows what the CLI prints without `--verbose`; set
+`HORAE_LIVESYNC_VERBOSE_LOG=1` (or `run --verbose-log`) to see every request and file path
+while debugging (secrets are still masked).
+
 `horae-livesync health` (the image's `HEALTHCHECK`) and the plugin's source turn it into a
 health: **healthy** when the status is fresh (`max_age_s`, default 120), the CLI is live,
 CouchDB answers and the lag is under `max_lag_s` (default 300); otherwise `problems` lists

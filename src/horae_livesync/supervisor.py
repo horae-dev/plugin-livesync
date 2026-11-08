@@ -53,6 +53,8 @@ class Layout:
     private_dir: Path = Path("/tmp")  # noqa: S108 (a tmpfs in the container)
     cli: Sequence[str] = DEFAULT_CLI
     cli_version: str = "unknown"
+    verbose_log: bool = False
+    """Forward the CLI's whole `--verbose` output (file paths, requests) to the container log."""
 
 
 @dataclass
@@ -238,7 +240,7 @@ class Supervisor:
             for raw in stream:
                 with self._lock:
                     self.tracker.line(raw)
-                shown = logwatch.forwarded(raw, self.secrets)
+                shown = logwatch.forwarded(raw, self.secrets, verbose=self.layout.verbose_log)
                 if shown is not None:
                     with self._lock:
                         self.out.write(shown + "\n")

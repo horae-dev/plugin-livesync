@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """`horae-livesync`: the sidecar's command (the container's entrypoint).
 
-    horae-livesync run     [--config F]   render the CLI settings, run the daemon, report
+    horae-livesync run     [--config F] [--verbose-log]
+                                          render the CLI settings, run the daemon, report
     horae-livesync check   [--config F]   validate livesync.yaml and resolve its secrets
     horae-livesync health  [--status-dir D] [--max-lag-s N] [--max-age-s N] [--json]
                                           exit 0 when healthy, 1 otherwise (HEALTHCHECK)
@@ -40,6 +41,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--database", default="/livesync")
     run.add_argument("--status-dir", default="/status")
     run.add_argument("--private-dir", default="/tmp")  # noqa: S108 (a tmpfs in the container)
+    run.add_argument(
+        "--verbose-log",
+        action="store_true",
+        default=os.environ.get("HORAE_LIVESYNC_VERBOSE_LOG") == "1",
+        help="forward the CLI's verbose output (file paths, every request) to the log",
+    )
     health = commands.add_parser("health", help="exit 0 when the last status is healthy")
     health.add_argument("--status-dir", default="/status")
     health.add_argument("--max-lag-s", type=int, default=300)
@@ -71,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         status_dir=Path(args.status_dir),
         private_dir=Path(args.private_dir),
         cli_version=os.environ.get("LIVESYNC_CLI_VERSION", "unknown"),
+        verbose_log=args.verbose_log,
     )
     supervisor = Supervisor(loaded, layout)
     signal.signal(signal.SIGTERM, supervisor.stop)

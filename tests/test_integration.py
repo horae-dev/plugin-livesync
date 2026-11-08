@@ -139,11 +139,13 @@ def stack() -> Iterator[Stack]:
             "-v", f"{s.files / 'config'}:/config:ro",
             "-v", f"{s.files / 'secrets'}:/run/secrets:ro",
             "-v", f"{s.volumes[0]}:/vault", "-v", f"{s.volumes[1]}:/livesync",
-            "-v", f"{s.volumes[2]}:/status", "-e", "TZ=UTC", s.image,
+            "-v", f"{s.volumes[2]}:/status", "-e", "TZ=UTC",
+            "-e", "HORAE_LIVESYNC_VERBOSE_LOG=1", s.image,
         )  # fmt: skip
         yield s
     finally:
-        print(docker("logs", s.sidecar, check=False)[-5000:])
+        print(docker("logs", s.sidecar, check=False)[-30000:])
+        print(docker("exec", s.sidecar, "cat", "/status/status.json", check=False))
         docker("rm", "-f", "-v", s.sidecar, s.couch, check=False)
         for volume in s.volumes:
             docker("volume", "rm", "-f", volume, check=False)
@@ -223,13 +225,13 @@ def test_deletions_travel_both_ways(stack: Stack) -> None:
 
 
 def test_health_reports_the_traffic_and_no_lag(stack: Stack) -> None:
+    # The status is rewritten every probe (5 s here): wait for one after the traffic above.
     def settled() -> dict[str, Any] | None:
         health = stack.health()
-        return health if health["healthy"] and health["pending_changes"] == 0 else None
+        done = health["files_out"] >= 2 and health["files_in"] >= 2  # a note, then a deletion
+        return health if done and health["healthy"] and health["pending_changes"] == 0 else None
 
-    health = eventually(settled, what="no pending changes")
-    assert health["files_out"] >= 2
-    assert health["files_in"] >= 1
+    health = eventually(settled, what="the traffic counted and no pending changes")
     assert health["lag_s"] == 0
     assert health["last_sync_at"] is not None
     status = stack.exec("cat", "/status/status.json")

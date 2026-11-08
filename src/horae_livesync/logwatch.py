@@ -22,7 +22,10 @@ _REPLICATION = ("_changes", "_bulk_docs", "_revs_diff", "_bulk_get")
 _NOT_CHECKPOINTS = frozenset({"obsidian_livesync_sync_parameters", "obsydian_livesync_milestone"})
 _REQ = re.compile(r"\[REQ\] \((?P<method>[A-Z]+)\) (?P<url>\S+) -> (?P<code>\d{3}|failed)")
 _FAILED = re.compile(r"HTTP:[A-Z]+ to:\S* -> failed")
-_FILE_IN = re.compile(r"\]\s+Processing .*: Done\s*$")
+# A file written to the vault: a replicated document reflected (live), or the startup scan.
+_FILE_IN = re.compile(r"\]\s+Processing .*: Done\s*$|STORAGE <- DB :(?!.*(skipped|not read))")
+# A file sent to the database: the watcher (`STORAGE -> DB (plain) x`) or the startup scan.
+_FILE_OUT = re.compile(r"STORAGE -> DB (\(|:)(?!.*skipped)")
 _VERBOSE = ("(Info)", "(Verbose)", "(debug)")
 MAX_CHECKPOINTS = 8
 
@@ -43,7 +46,7 @@ def events(line: str) -> list[Event]:
         return _daemon(line)
     if _FILE_IN.search(line):
         return [Event("file_in")]
-    if "STORAGE -> DB" in line:
+    if _FILE_OUT.search(line):
         return [Event("file_out")]
     if _FAILED.search(line):
         return [Event("sync_error", "unreachable")]
@@ -90,13 +93,15 @@ def _request(url: str, code: str) -> list[Event]:
     return found
 
 
-def forwarded(line: str, secrets: Iterable[str]) -> str | None:
+def forwarded(line: str, secrets: Iterable[str], *, verbose: bool = False) -> str | None:
     """The line as the container's log shows it, or None to drop it: only what the CLI prints
-    without `--verbose`, with secret values masked."""
+    without `--verbose` (everything with `verbose`), with secret values masked."""
     stripped = line.rstrip("\r\n")
-    if not stripped.strip() or stripped.startswith(_VERBOSE) or stripped[:1].isspace():
+    if not stripped.strip():
         return None
-    if stripped in ("{", "}"):
+    if not verbose and (
+        stripped.startswith(_VERBOSE) or stripped[:1].isspace() or stripped in ("{", "}")
+    ):
         return None
     for secret in secrets:
         if secret:

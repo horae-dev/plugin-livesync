@@ -62,6 +62,12 @@ def test_an_unreachable_couchdb() -> None:
             [Event("checkpoint", "a/b"), Event("sync_error", "unreachable")],
         ),
         ("(debug) [R]  [REQ] (GET) http://c:5984/db/_local/" + "x" * 200 + " -> 200", []),
+        ("(Verbose) [SF:OfflineScanner]  STORAGE <- DB :notes/a.md", [Event("file_in")]),
+        ("(Info) [S]  STORAGE <- DB : big.md has been skipped due to file size", []),
+        ("(Info) [S]  STORAGE <- DB : Cloud not read x.md, possibly deleted", []),
+        ("(Info) [S]  STORAGE -> DB :notes/a.md", [Event("file_out")]),
+        ("(Info) [S]  STORAGE -> DB : big.md has been skipped due to file size", []),
+        ("(debug) [S]  STORAGE ? DB :a.md Checking content", []),
         ("plain text", []),
     ],
 )
@@ -77,6 +83,12 @@ def test_forwarded_shows_only_what_the_cli_prints_without_verbose() -> None:
     assert not any(text.startswith(("(debug)", "(Info)", "(Verbose)", " ")) for text in shown)
     assert "{" not in shown
     assert "}" not in shown
+
+
+def test_forwarded_verbose_keeps_everything_but_secrets() -> None:
+    line = "(debug) [R]  [REQ] (GET) http://c/db/ -> 200 abcdefgh9"
+    assert forwarded(line, ["abcdefgh9"], verbose=True) == line.replace("abcdefgh9", "***")
+    assert forwarded("    at stack", (), verbose=True) == "    at stack"
 
 
 def test_forwarded_masks_secrets() -> None:

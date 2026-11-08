@@ -60,7 +60,8 @@ def test_run_starts_the_supervisor(
     monkeypatch.setattr("signal.signal", lambda *args: None)
     monkeypatch.setenv("LIVESYNC_CLI_VERSION", "1.0.46-patch2-cli")
     config = write_config(tmp_path, secrets_dir)
-    assert cli.main(["run", "--config", str(config), "--vault", "/v"]) == 0
+    assert cli.main(["run", "--config", str(config), "--vault", "/v", "--verbose-log"]) == 0
+    assert seen["layout"].verbose_log is True
     assert seen["layout"].vault == Path("/v")
     assert seen["layout"].cli_version == "1.0.46-patch2-cli"
 
