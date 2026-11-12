@@ -1,0 +1,83 @@
+# The LiveSync sidecar on Coolify: the services and volumes to MERGE into the core's Coolify
+# compose (horae-dev/horae deploy/coolify/docker-compose.yaml, a "Docker Compose Empty"
+# resource). Not a file to deploy on its own. Step by step: docs/setup.md, "On Coolify".
+#
+#   - `livesync`: add the whole service.
+#   - `horae`: keep everything the core's template has (image, environment, hardening, labels)
+#     and add the two volumes and the `livesync` dependency below. `horae-init` is unchanged.
+#   - `volumes`: add the four volumes next to `horae-instance`.
+#   - No `networks`, no `ports`: the sidecar only talks to CouchDB; it is on the resource's own
+#     network like the rest, and nothing connects to it.
+#
+# Coolify variables (Environment Variables of the resource): HORAE_LIVESYNC_TAG (the image tag:
+# `sha-<short>` of a plugin-livesync main commit, a release `X.Y.Z`, or `<tag>@sha256:<digest>`),
+# LIVESYNC_COUCHDB_PASSWORD and LIVESYNC_E2EE_PASSPHRASE (the two secrets; livesync.yaml points
+# at them with `secrets.refs: {NAME: {env: NAME}}`), and TZ if not UTC. Every `${VAR:?}` is
+# required: Coolify blocks the deployment until it is set. No text after `:?`: Coolify would
+# store that text as the value.
+#
+# livesync.yaml is a Coolify file mount: after the first save, Storages lists
+# /config/livesync.yaml; paste its content there (docs/setup.md). It holds no secret value.
+services:
+  livesync:
+    image: "ghcr.io/horae-dev/horae-livesync:${HORAE_LIVESYNC_TAG:?}"
+    platform: linux/amd64
+    restart: unless-stopped
+    # An init process as PID 1: it reaps whatever the Node.js CLI leaves behind and forwards
+    # SIGTERM to horae-livesync.
+    init: true
+    user: "10001:10001"
+    read_only: true
+    # The rendered CLI settings (credentials, passphrase) live here, 0600, in memory.
+    tmpfs:
+      - "/tmp:size=64m,noexec,nosuid,nodev"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    stop_grace_period: 30s
+    # The image's HEALTHCHECK allows 5 min for the first fetch. For a large vault, raise it:
+    #   healthcheck: { start_period: 1h }
+    # The secrets come as environment variables: horae-livesync reads them (secrets.refs) and
+    # never passes its environment to the LiveSync CLI. Never add them to `horae`.
+    environment:
+      - TZ=${TZ:-UTC}
+      - LIVESYNC_COUCHDB_PASSWORD=${LIVESYNC_COUCHDB_PASSWORD:?}
+      - LIVESYNC_E2EE_PASSPHRASE=${LIVESYNC_E2EE_PASSPHRASE:?}
+    volumes:
+      # livesync.yaml: a Coolify file mount (Storages), read-only, world-readable is fine.
+      - type: bind
+        source: ./livesync.yaml
+        target: /config/livesync.yaml
+        read_only: true
+      # The CLI's local PouchDB: keep it (a lost one means a full fetch from CouchDB).
+      - livesync-db:/livesync
+      # The vault as plain files, shared with `horae`. Back it up.
+      - livesync-vault:/vault
+      # The sidecar's status, read-only in `horae` (livesync.status).
+      - livesync-status:/status
+      # The nightly git snapshots of the vault: never inside the vault, never in `horae`.
+      # Back it up too.
+      - livesync-snapshots:/snapshots
+
+  horae:
+    # ADD to the core's `horae` service (keep the rest of it as is).
+    depends_on:
+      horae-init:
+        condition: service_completed_successfully
+      # The sidecar first, so that the new volumes are created with its owner (10001, 0700).
+      livesync:
+        condition: service_started
+    volumes:
+      - horae-instance:/instance
+      - livesync-vault:/vault
+      - livesync-status:/livesync-status:ro
+
+# Coolify prefixes each name with the resource's UUID.
+volumes:
+  horae-instance:
+  livesync-db:
+  livesync-vault:
+  livesync-status:
+  livesync-snapshots:

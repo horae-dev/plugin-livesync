@@ -49,6 +49,7 @@ USER = "horae"
 PASSWORD = 'synthetic pw:/@%"\\&+#é-couch'
 PASSPHRASE = 'synthetic e2ee:/@%"\\&+#é-phrase'
 DATABASE = "notes"
+ENV_SECRETS = ("LIVESYNC_COUCHDB_PASSWORD", "LIVESYNC_E2EE_PASSPHRASE")
 PROBE_INTERVAL_S, MAX_AGE_S = 5, 15
 
 
@@ -100,6 +101,7 @@ class Stack:
         self.couch = f"livesync-it-couch-{self.id}"
         self.sidecar = f"livesync-it-sidecar-{self.id}"
         self.bad_sidecar = f"livesync-it-bad-{self.id}"
+        self.env_sidecar = f"livesync-it-env-{self.id}"
         self.volumes = [
             f"livesync-it-{name}-{self.id}" for name in ("vault", "db", "status", "dev")
         ]
@@ -205,7 +207,8 @@ def stack() -> Iterator[Stack]:
         print(docker("logs", s.sidecar, check=False)[-30000:])
         print(docker("exec", s.sidecar, "cat", "/status/status.json", check=False))
         print(docker("logs", s.bad_sidecar, check=False)[-5000:])
-        docker("rm", "-f", "-v", s.sidecar, s.bad_sidecar, s.couch, check=False)
+        print(docker("logs", s.env_sidecar, check=False)[-5000:])
+        docker("rm", "-f", "-v", s.sidecar, s.bad_sidecar, s.env_sidecar, s.couch, check=False)
         for volume in s.volumes:
             docker("volume", "rm", "-f", volume, check=False)
         docker("network", "rm", s.network, check=False)
@@ -215,7 +218,7 @@ def stack() -> Iterator[Stack]:
 def write_files(s: Stack) -> None:
     """livesync.yaml, the two secret files, and the other device's settings (all synthetic,
     world-readable so that uid 10001 in the containers can read the bind mounts)."""
-    for name in ("config", "secrets", "secrets-bad", "device"):
+    for name in ("config", "config-env", "secrets", "secrets-bad", "device"):
         (s.files / name).mkdir()
     document = config_document(Path("/run/secrets"))
     document["couchdb"].update(
@@ -223,6 +226,9 @@ def write_files(s: Stack) -> None:
     )
     document["health"] = {"probe_interval_s": PROBE_INTERVAL_S, "max_age_s": MAX_AGE_S}
     (s.files / "config" / "livesync.yaml").write_text(yaml.safe_dump(document))
+    # The Coolify layout: both secrets from environment variables, no secrets directory.
+    from_env = {**document, "secrets": {"refs": {name: {"env": name} for name in ENV_SECRETS}}}
+    (s.files / "config-env" / "livesync.yaml").write_text(yaml.safe_dump(from_env))
     for directory, password in (("secrets", PASSWORD), ("secrets-bad", "synthetic-wrong-pw")):
         (s.files / directory / "LIVESYNC_COUCHDB_PASSWORD").write_text(password + "\n", "utf-8")
         (s.files / directory / "LIVESYNC_E2EE_PASSPHRASE").write_text(PASSPHRASE + "\n", "utf-8")
@@ -394,6 +400,52 @@ def test_a_wrong_password_is_not_retried(stack: Stack) -> None:
     log = logs(stack.bad_sidecar)
     assert "refused the credentials (unauthorized)" in log
     assert "[Daemon]" not in log  # the CLI never started
+
+
+def test_secrets_from_environment_variables(stack: Stack) -> None:
+    """The Coolify layout: `secrets.refs: {NAME: {env: NAME}}` and the two secrets as
+    environment variables, no /run/secrets. The sidecar syncs, and the LiveSync CLI it starts
+    does not get them in its environment."""
+    tmpfs = "uid=10001,gid=10001,mode=0700"
+    docker(
+        "run", "-d", "--name", stack.env_sidecar, "--network", stack.network, "--init",
+        "--read-only", "--tmpfs", "/tmp:size=64m,noexec,nosuid,nodev",
+        "--tmpfs", f"/vault:{tmpfs}", "--tmpfs", f"/livesync:{tmpfs}",
+        "--tmpfs", f"/status:{tmpfs}",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "-v", f"{stack.files / 'config-env'}:/config:ro",
+        "-e", f"LIVESYNC_COUCHDB_PASSWORD={PASSWORD}",
+        "-e", f"LIVESYNC_E2EE_PASSPHRASE={PASSPHRASE}", stack.image,
+    )  # fmt: skip
+    try:
+        eventually(
+            lambda: stack.health(stack.env_sidecar)["healthy"],
+            timeout=240,
+            what="the sidecar with secrets from the environment healthy",
+        )
+        # It fetched the vault from CouchDB: the password and the passphrase both worked.
+        eventually(
+            lambda: "after-outage.md" in docker("exec", stack.env_sidecar, "ls", "/vault"),
+            what="the vault fetched with secrets from the environment",
+        )
+        # The environment of every LiveSync CLI process (argv[0] is node; the whole command
+        # line would match this shell's own too): no variable of ours.
+        environ = docker(
+            "exec", stack.env_sidecar, "sh", "-c",
+            "for p in /proc/[0-9]*; do"
+            " first=$(tr '\\0' '\\n' < $p/cmdline 2>/dev/null | head -n 1);"
+            " case \"$first\" in node|*/node) echo \"== $p\";"
+            " tr '\\0' '\\n' < $p/environ;; esac; done",
+        )  # fmt: skip
+        assert "== /proc/" in environ, "no LiveSync CLI process found"
+        for name in ENV_SECRETS:
+            assert name not in environ
+        forms = [form.encode() for form in mask_forms([PASSWORD, PASSPHRASE], USER)]
+        log = logs(stack.env_sidecar).encode() + environ.encode()
+        for form in forms:
+            assert form not in log, "a form of a secret in the log or the CLI's environment"
+    finally:
+        docker("rm", "-f", "-v", stack.env_sidecar, check=False)
 
 
 def test_no_secret_is_left_anywhere(stack: Stack) -> None:

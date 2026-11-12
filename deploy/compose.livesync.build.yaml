@@ -1,0 +1,18 @@
+# Build the LiveSync sidecar from source instead of pulling the published image: a second
+# override, after compose.livesync.yaml.
+#
+#   docker compose -f docker-compose.yaml -f compose.livesync.yaml \
+#     -f compose.livesync.build.yaml up -d --build
+#
+# HORAE_LIVESYNC_TAG is then a plugin-livesync COMMIT (not an image tag): the image is built
+# from the repository at that commit and tagged with it locally. No default: an update is
+# always a deliberate pin. Everything else (hardening, volumes, secrets) comes from
+# compose.livesync.yaml. linux/amd64 only (README, "Deploying"). The image built this way is
+# not the signed one from ghcr.io.
+services:
+  livesync:
+    # A local name: never mistaken for the published image.
+    image: "horae-livesync:${HORAE_LIVESYNC_TAG:?set HORAE_LIVESYNC_TAG to a plugin-livesync commit}"
+    build:
+      context: "https://github.com/horae-dev/plugin-livesync.git#${HORAE_LIVESYNC_TAG:?set HORAE_LIVESYNC_TAG to a plugin-livesync commit}"
+    pull_policy: build

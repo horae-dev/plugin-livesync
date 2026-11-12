@@ -7,10 +7,18 @@
 # status (/livesync-status, read-only). Then, in horae.lock: plugin-obsidian's paths.write is
 # /vault and plugin-livesync's paths.read is /livesync-status. README "Deploying".
 #
-# Needed in .env: HORAE_LIVESYNC_REF (a commit of plugin-livesync: no default, so an update
-# is always a deliberate pin), HORAE_LIVESYNC_CONFIG (the livesync.yaml file),
-# HORAE_SECRETS_DIR (already used by the core: the two secret files below live there,
-# readable by uid 10001). Use a dedicated CouchDB user for the sidecar (README, "Deploying").
+# Needed in .env: HORAE_LIVESYNC_TAG (the image tag: `sha-<short>` of a main commit, a release
+# `X.Y.Z`, or `<tag>@sha256:<digest>` to pin the digest too; no default, so an update is always
+# a deliberate pin), HORAE_LIVESYNC_CONFIG (the livesync.yaml file), HORAE_SECRETS_DIR (already
+# used by the core: the two secret files below live there, readable by uid 10001). Use a
+# dedicated CouchDB user for the sidecar (README, "Deploying").
+#
+# The image is ghcr.io/horae-dev/horae-livesync, built, tested against CouchDB and signed by
+# this repository's CI (README, "Deploying": how to verify the signature). To build it from
+# source instead, add compose.livesync.build.yaml after this file (HORAE_LIVESYNC_TAG is then
+# a commit).
+#
+# On Coolify, merge coolify.livesync.yaml into the core's Coolify compose instead (docs/setup.md).
 #
 # KNOWN LIMITATION, deletions while the sidecar is down (README): the CLI rescans the vault
 # folder against its local database on every start (each container or CLI restart). A file
@@ -20,10 +28,8 @@
 # folder only while the sidecar is up (`livesync.status` reports `live`).
 services:
   livesync:
-    # No published image yet: built from this repository at the commit you pin (README).
-    image: "horae-livesync:${HORAE_LIVESYNC_REF:?set HORAE_LIVESYNC_REF to a plugin-livesync commit}"
-    build:
-      context: "https://github.com/horae-dev/plugin-livesync.git#${HORAE_LIVESYNC_REF:?set HORAE_LIVESYNC_REF to a plugin-livesync commit}"
+    # The published image at the tag you pin (README, "Deploying").
+    image: "ghcr.io/horae-dev/horae-livesync:${HORAE_LIVESYNC_TAG:?set HORAE_LIVESYNC_TAG to an image tag, e.g. sha-<short>}"
     platform: linux/amd64
     restart: unless-stopped
     # An init process as PID 1: it reaps whatever the Node.js CLI leaves behind and forwards
