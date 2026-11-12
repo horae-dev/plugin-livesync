@@ -22,12 +22,17 @@ AUTH = "Basic " + base64.b64encode(b"horae:synthetic-pw").decode()
 class FakeCouch(BaseHTTPRequestHandler):
     routes: ClassVar[dict[str, tuple[int, Any]]] = {}
     seen: ClassVar[list[str]] = []
+    agents: ClassVar[list[str]] = []
 
     def do_GET(self) -> None:
         self.seen.append(self.path)
+        self.agents.append(self.headers.get("User-Agent", ""))
         code: int
         body: Any
-        if self.headers.get("Authorization") != AUTH:
+        if self.headers.get("User-Agent", "").startswith("Python-urllib"):
+            # What a CDN's bot check (Cloudflare's Browser Integrity Check) answers.
+            code, body = 403, {"error": "forbidden"}
+        elif self.headers.get("Authorization") != AUTH:
             code, body = 401, {"error": "unauthorized"}
         else:
             code, body = self.routes.get(self.path, (404, {"error": "not_found"}))
@@ -47,6 +52,7 @@ class FakeCouch(BaseHTTPRequestHandler):
 def couch() -> Iterator[str]:
     FakeCouch.routes = {}
     FakeCouch.seen = []
+    FakeCouch.agents = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeCouch)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -142,3 +148,11 @@ def test_repr_hides_the_credentials() -> None:
 )
 def test_seq_number(value: object, number: int | None) -> None:
     assert seq_number(value) == number
+
+
+def test_the_probe_names_itself_so_a_cdn_bot_check_lets_it_through(couch: str) -> None:
+    FakeCouch.routes = {"/my%2Fnotes/": (200, {"update_seq": "3-g1AA"})}
+    result = probe(couch).probe()
+    assert result.ok, result
+    assert FakeCouch.agents
+    assert all(agent.startswith("horae-livesync") for agent in FakeCouch.agents)

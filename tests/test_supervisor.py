@@ -197,7 +197,13 @@ def test_refused_credentials_at_start_never_start_the_cli(
     sup = make(tmp_path, secrets_dir, prober=prober, auth_retry_s=2)
     runner = start(sup)
     try:
-        wait_for(lambda: sup.tracker.doc["process"]["state"] == "auth_failed")
+        # Wait for the written status, not the in-memory state: the state flips before the
+        # status file is written (#11).
+        def written_auth_failed() -> bool:
+            doc = status.read(tmp_path / "status")
+            return doc is not None and doc["process"]["state"] == "auth_failed"
+
+        wait_for(written_auth_failed)
         written = status.read(tmp_path / "status")
         assert written is not None
         assert written["remote"]["error"] == "unauthorized"
