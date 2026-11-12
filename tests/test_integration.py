@@ -428,12 +428,14 @@ def test_secrets_from_environment_variables(stack: Stack) -> None:
             lambda: "after-outage.md" in docker("exec", stack.env_sidecar, "ls", "/vault"),
             what="the vault fetched with secrets from the environment",
         )
-        # Every process of the LiveSync CLI (node), and only those: no variable of ours.
+        # The environment of every LiveSync CLI process (argv[0] is node; the whole command
+        # line would match this shell's own too): no variable of ours.
         environ = docker(
             "exec", stack.env_sidecar, "sh", "-c",
             "for p in /proc/[0-9]*; do"
-            " if tr '\\0' ' ' < $p/cmdline 2>/dev/null | grep -q index.cjs; then"
-            " echo \"== $p\"; tr '\\0' '\\n' < $p/environ; fi; done",
+            " first=$(tr '\\0' '\\n' < $p/cmdline 2>/dev/null | head -n 1);"
+            " case \"$first\" in node|*/node) echo \"== $p\";"
+            " tr '\\0' '\\n' < $p/environ;; esac; done",
         )  # fmt: skip
         assert "== /proc/" in environ, "no LiveSync CLI process found"
         for name in ENV_SECRETS:
