@@ -216,35 +216,62 @@ container (below).
 
 ## Deploying
 
-The image is built from this repository's [`Dockerfile`](Dockerfile): the official CLI image
-pinned by tag and digest (its Node.js runtime and `/app` bundle, unchanged) on
-`python:3.12-slim-bookworm` (pinned), with `horae-livesync` as the entrypoint, user `10001`
-like the Horae image. It is not published yet. **linux/amd64 only**: that is the platform CI
-builds and tests (`docker build --platform linux/amd64`); the upstream CLI image has an arm64
-variant, but this image is not tested on it.
+The image is `ghcr.io/horae-dev/horae-livesync`, built from this repository's
+[`Dockerfile`](Dockerfile): the official CLI image pinned by tag and digest (its Node.js runtime
+and `/app` bundle, unchanged) on `python:3.12-slim-bookworm` (pinned), with `horae-livesync`
+as the entrypoint, user `10001` like the Horae image. **linux/amd64 only**: that is the
+platform CI builds and tests; the upstream CLI image has an arm64 variant, but this image is
+not tested on it.
+
+**Published images.** Every push to `main` publishes the image once every CI job has passed,
+the Integration job (this Dockerfile against a real CouchDB) included: the `publish` job of
+[`ci.yml`](.github/workflows/ci.yml) builds it again, smoke-tests it
+([`scripts/smoke-image.sh`](scripts/smoke-image.sh)), pushes it by digest with an SBOM and
+provenance attached, signs the digest keyless with cosign, and only then tags it
+`sha-<short>` (the main commit). A `v*` tag ([`image.yml`](.github/workflows/image.yml)) adds
+`X.Y.Z` and `X.Y` (and `X` from 1.0) to that same digest after checking its signature;
+nothing is rebuilt. There is no `latest`. To verify an image before you deploy it:
+
+```
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity https://github.com/horae-dev/plugin-livesync/.github/workflows/ci.yml@refs/heads/main \
+  ghcr.io/horae-dev/horae-livesync:<tag>
+```
 
 [`deploy/compose.livesync.yaml`](deploy/compose.livesync.yaml) is an override for the core's
 `deploy/compose` stack: it adds the `livesync` service (read-only root, tmpfs `/tmp`, no
 capabilities, `no-new-privileges`, an init process as PID 1, only its two secrets) and gives
 `horae` the vault at `/vault` and the status read-only at `/livesync-status`. Then in
 `horae.lock`, plugin-obsidian's `paths.write` is `/vault` and this plugin's `paths.read` is
-`/livesync-status`. `HORAE_LIVESYNC_REF` (the plugin-livesync commit to build) has no default:
-an update is always a deliberate pin.
+`/livesync-status`. `HORAE_LIVESYNC_TAG` (the image tag: `sha-<short>`, `X.Y.Z`, or
+`<tag>@sha256:<digest>` to pin the digest too) has no default: an update is always a
+deliberate pin.
 
 ```
 cp livesync.example.yaml /srv/horae/livesync.yaml && $EDITOR /srv/horae/livesync.yaml
 printf '%s\n' '<couchdb password>' > "$HORAE_SECRETS_DIR/LIVESYNC_COUCHDB_PASSWORD"
 printf '%s\n' '<e2ee passphrase>'  > "$HORAE_SECRETS_DIR/LIVESYNC_E2EE_PASSPHRASE"
 chown 10001:10001 "$HORAE_SECRETS_DIR"/LIVESYNC_* && chmod 0400 "$HORAE_SECRETS_DIR"/LIVESYNC_*
-HORAE_LIVESYNC_CONFIG=/srv/horae/livesync.yaml HORAE_LIVESYNC_REF=<commit> \
+HORAE_LIVESYNC_CONFIG=/srv/horae/livesync.yaml HORAE_LIVESYNC_TAG=sha-<short> \
   docker compose -f docker-compose.yaml -f compose.livesync.yaml up -d
 docker compose exec livesync horae-livesync check
 docker compose exec livesync horae-livesync health
 ```
 
-On **Coolify** (PLAN §7), add the same service to Horae's compose resource; secrets can be
-Coolify variables referenced with `secrets.refs: {LIVESYNC_COUCHDB_PASSWORD: {env: ...}}`
-(the sidecar never passes its environment to the CLI). The full guide is [docs/setup.md](docs/setup.md).
+**From source**: add [`deploy/compose.livesync.build.yaml`](deploy/compose.livesync.build.yaml)
+as a third `-f` and set `HORAE_LIVESYNC_TAG` to a plugin-livesync commit; the image is built
+from the repository at that commit (`docker build --platform linux/amd64`) under a local name.
+
+On **Coolify** (PLAN §7), a "Docker Compose Empty" resource cannot build from a git context:
+merge [`deploy/coolify.livesync.yaml`](deploy/coolify.livesync.yaml) into the core's Coolify
+compose (the `livesync` service with the same hardening, the vault and status volumes shared
+with `horae`). There the two secrets are Coolify variables passed to the sidecar as
+environment variables, read through `secrets.refs: {LIVESYNC_COUCHDB_PASSWORD: {env:
+LIVESYNC_COUCHDB_PASSWORD}, ...}` (the sidecar never passes its environment to the CLI;
+integration test `test_secrets_from_environment_variables`), and `livesync.yaml` is a Coolify
+file mount whose content you write under Storages. Step by step:
+[docs/setup.md, "On Coolify"](docs/setup.md#on-coolify).
 
 Point the sidecar at an **empty** vault volume the first time: it then fetches everything. A
 vault folder that already has files is merged both ways by the startup scan. The image's
@@ -381,7 +408,8 @@ Decisions taken in review of #2 (maintainer: "go with what's good for the projec
   decision on a CLI bump.
 - **Secret names and values follow the core's rules** (reserved names, empty and short
   values, `Secret` guards), checked by a contract table mirroring the core's tests.
-- **`HORAE_LIVESYNC_REF` is required**; the build uses no apt package (git comes with the
+- **The pin is required** (`HORAE_LIVESYNC_TAG` since the image is published, #9; it was
+  the commit `HORAE_LIVESYNC_REF` before); the build uses no apt package (git comes with the
   pinned full Python image of the build stage); the final image has none, so snapshots use
   `dulwich`.
 - **Thresholds live in `livesync.yaml`** and travel in the status, so the image's

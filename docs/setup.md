@@ -133,8 +133,11 @@ before the first sync. The generator script described in the server guide
 
 ## 3. The sidecar
 
-The image is not published: it is built from this repository at a commit you pin
-(`HORAE_LIVESYNC_REF`, no default), linux/amd64 only ([README, Deploying](../README.md#deploying)).
+The image is published by this repository's CI as `ghcr.io/horae-dev/horae-livesync`,
+linux/amd64 only, signed with cosign ([README, Deploying](../README.md#deploying)). Pin a tag
+with `HORAE_LIVESYNC_TAG` (no default): `sha-<short>` of a main commit, a release `X.Y.Z`, or
+`<tag>@sha256:<digest>` to pin the digest too. With plain Docker Compose follow the steps
+below; on Coolify, the next section.
 
 1. Copy [`deploy/livesync.example.yaml`](../deploy/livesync.example.yaml) next to `horae.yaml`
    and set `couchdb.url`, `couchdb.database`, `couchdb.username: horae`, the E2EE and obfuscation
@@ -148,24 +151,88 @@ The image is not published: it is built from this repository at a commit you pin
    chown 10001:10001 "$HORAE_SECRETS_DIR"/LIVESYNC_* && chmod 0400 "$HORAE_SECRETS_DIR"/LIVESYNC_*
    ```
 
-   On Coolify, put them in Coolify variables and point `secrets.refs` at
-   `{env: ...}` instead of files (README, Deploying; the sidecar never passes its
-   environment to the CLI).
 3. Add [`deploy/compose.livesync.yaml`](../deploy/compose.livesync.yaml) to Horae's stack and
-   set `HORAE_LIVESYNC_REF=<plugin-livesync commit>`, `HORAE_LIVESYNC_CONFIG=<path to
-   livesync.yaml>` and `HORAE_SECRETS_DIR`:
+   set `HORAE_LIVESYNC_TAG=<image tag>`, `HORAE_LIVESYNC_CONFIG=<path to livesync.yaml>` and
+   `HORAE_SECRETS_DIR`:
 
    ```sh
-   docker compose -f docker-compose.yaml -f compose.livesync.yaml up -d --build
+   docker compose -f docker-compose.yaml -f compose.livesync.yaml up -d
    ```
+
+   To build the image from source instead, add
+   [`deploy/compose.livesync.build.yaml`](../deploy/compose.livesync.build.yaml) as a third
+   `-f` and set `HORAE_LIVESYNC_TAG` to a plugin-livesync **commit** (`up -d --build`).
 
    Volumes it creates: `livesync-vault` mounted at `/vault` in **both** the sidecar and
    `horae` (the plain-file vault), `livesync-db` at `/livesync` (the CLI's local PouchDB; keep
    it, losing it means a full re-fetch), `livesync-status` at `/status` (and `/livesync-status`
    read-only in `horae`) and `livesync-snapshots` at `/snapshots`. Back up `livesync-vault` and
-   `livesync-snapshots`. How the Coolify resource ties this to the core's compose resource is
-   outside this repository's tests **(unverified on Coolify)**; the core's Coolify guide is
-   the authority for the Horae side.
+   `livesync-snapshots`.
+
+### On Coolify
+
+The core's Coolify guide
+([`docs/operations/coolify.md`](https://github.com/horae-dev/horae/blob/main/docs/operations/coolify.md))
+deploys Horae as a "Docker Compose Empty" resource from its template
+(`deploy/coolify/docker-compose.yaml`: services `horae-init` and `horae`, volume
+`horae-instance`). Such a resource cannot build from a git context, so the sidecar runs the
+published image. Coolify has no compose `secrets:` files either: the two secrets are Coolify
+variables, and `livesync.yaml` is a Coolify file mount. **(unverified on Coolify: the steps
+below follow the core's guide and Coolify's documented compose features, not a test.)**
+
+1. **Edit Compose** of Horae's resource and merge
+   [`deploy/coolify.livesync.yaml`](../deploy/coolify.livesync.yaml) into it: the whole
+   `livesync` service; in `horae`, the `livesync` entry of `depends_on` and the two
+   `livesync-*` volumes (keep everything else of the core's `horae`); the four `livesync-*`
+   volumes next to `horae-instance`. No `networks` and no `ports`. The sidecar keeps the same
+   hardening as with plain Compose (user 10001, read-only root, tmpfs `/tmp`, no capabilities,
+   `no-new-privileges`, an init process), and nothing of the core's service changes.
+2. **Environment Variables** of the resource: `HORAE_LIVESYNC_TAG` (as above),
+   `LIVESYNC_COUCHDB_PASSWORD` and `LIVESYNC_E2EE_PASSPHRASE` (the values), and `TZ` if not
+   UTC. The fragment hands the two secrets to `livesync` only; never add them to `horae`.
+3. **Storages**: after the first save, Coolify lists the file mount `/config/livesync.yaml`
+   of `livesync`. Put the file's content there: the example with `secrets.refs` pointing at
+   the two variables, for example
+
+   ```yaml
+   # livesync.yaml on Coolify
+   schema_version: 1
+   couchdb:
+     url: https://couchdb.example.org
+     database: obsidian
+     username: horae
+     password_secret: LIVESYNC_COUCHDB_PASSWORD
+   e2ee:
+     passphrase_secret: LIVESYNC_E2EE_PASSPHRASE
+     path_obfuscation: true
+   sync: { mode: live }
+   settings: {}
+   snapshot:
+     enabled: true
+     time: "03:00"
+   # Both secrets from the environment (Coolify variables), not from files.
+   secrets:
+     refs:
+       LIVESYNC_COUCHDB_PASSWORD: { env: LIVESYNC_COUCHDB_PASSWORD }
+       LIVESYNC_E2EE_PASSPHRASE: { env: LIVESYNC_E2EE_PASSPHRASE }
+   ```
+
+   The file holds no secret value, and the sidecar only needs to read it (Coolify creates it
+   on the host; it must be readable by uid 10001). Every other key of
+   [`livesync.example.yaml`](../deploy/livesync.example.yaml) works the same way.
+4. Deploy. `horae-livesync check` in the `livesync` container's terminal (Coolify's
+   **Terminal** tab) validates the file and resolves both secrets without printing them.
+
+How the variables are used: `horae-livesync` resolves each secret through its `{env: VAR}`
+reference (the same rules as `horae.yaml`, schemas decision 25), renders the CLI's settings
+into its private tmpfs, and starts the LiveSync CLI with a minimal environment that does
+**not** contain the variables (checked by the integration test
+`test_secrets_from_environment_variables`). Unlike secret files, environment variables are
+visible to whoever can run `docker inspect` on the server or read the resource's variables
+in Coolify: the same exposure as the core's own `HORAE_ANTHROPIC_API_KEY` there.
+
+### Then, with either layout
+
 4. In `horae.lock`: give plugin-obsidian `paths.write` = `/vault` and this plugin
    `paths.read` = `/livesync-status`. Add `livesync.status` to a pipeline if you want the health
    in a note or a notification.
