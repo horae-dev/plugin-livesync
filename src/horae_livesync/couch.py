@@ -27,6 +27,7 @@ from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, OpenerDirector, ProxyHandler, Request, build_opener
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+USER_AGENT = "horae-livesync (+https://github.com/horae-dev/plugin-livesync)"
 AUTH_ERRORS = frozenset({"unauthorized", "forbidden"})
 
 
@@ -68,7 +69,14 @@ class CouchProbe:
     ) -> None:
         self._base = f"{url.rstrip('/')}/{quote(database, safe='')}"
         token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
-        self._headers = {"Authorization": f"Basic {token}", "Accept": "application/json"}
+        self._headers = {
+            "Authorization": f"Basic {token}",
+            "Accept": "application/json",
+            # Our own name, not urllib's default `Python-urllib/3.x`: CDNs in front of CouchDB
+            # (Cloudflare's Browser Integrity Check) refuse that one with a 403, which the
+            # supervisor would then read as refused credentials.
+            "User-Agent": USER_AGENT,
+        }
         self._timeout = timeout_s
         self._opener = opener or build_opener(ProxyHandler({}), _NoRedirect())
 
