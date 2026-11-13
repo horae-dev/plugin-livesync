@@ -12,8 +12,8 @@
 # together, and refresh licenses/obsidian-livesync.LICENSE and THIRD_PARTY_NOTICES.
 ARG LIVESYNC_CLI=ghcr.io/vrtmrz/livesync-cli:1.0.46-patch2-cli@sha256:4a0675db1ebd6d891624daedb37b1467f60de7b1a090f0252b7a1769fb382701
 ARG PYTHON=python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
-# The build stage only: the same Python 3.12 on the full bookworm image, which ships git
-# (needed for the horae-sdk git source), so nothing is installed from apt at build time.
+# The build stage only: the same Python 3.12 on the full bookworm image, so nothing is
+# installed from apt at build time.
 ARG PYTHON_BUILD=python:3.12-bookworm@sha256:4209fae09a3e20afd863e528bfddc235da5fd5977983e1996cd54cc9a72e6267
 ARG UV=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 
