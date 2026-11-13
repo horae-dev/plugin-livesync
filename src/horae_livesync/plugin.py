@@ -25,7 +25,7 @@ from horae_livesync import status
 
 NAME = "livesync"
 """The plugin's name, also the namespace of its refs (`livesync.status`)."""
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 COMMAND = ["python3", "-m", "horae_livesync"]
 """`runtime.command` of `plugin.yaml`. When installing, pin an absolute interpreter that has
 this package (the host's `PATH` is fixed and its working directory empty)."""

@@ -1,6 +1,6 @@
 [project]
 name = "horae-plugin-livesync"
-version = "0.1.0"
+version = "0.1.1"
 description = "Horae plugin: keep an Obsidian vault as plain files on the server with Self-hosted LiveSync (E2EE CouchDB)."
 readme = "README.md"
 license = "Apache-2.0"
