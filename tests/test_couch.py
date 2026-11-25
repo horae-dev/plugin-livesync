@@ -156,3 +156,35 @@ def test_the_probe_names_itself_so_a_cdn_bot_check_lets_it_through(couch: str) -
     assert result.ok, result
     assert FakeCouch.agents
     assert all(agent.startswith("horae-livesync") for agent in FakeCouch.agents)
+
+
+MILESTONE = "/my%2Fnotes/_local/obsydian_livesync_milestone"
+DB = (200, {"update_seq": "5-g1AAAA"})
+
+
+@pytest.mark.parametrize(
+    ("milestone", "node_id", "locked"),
+    [
+        ((200, {"locked": True, "accepted_nodes": ["obsidian-a", "obsidian-b"]}), None, True),
+        ((200, {"locked": True, "accepted_nodes": ["obsidian-a"]}), "cli-node", True),
+        ((200, {"locked": True, "accepted_nodes": ["obsidian-a", "cli-node"]}), "cli-node", False),
+        ((200, {"locked": False, "accepted_nodes": []}), None, False),
+        ((404, {"error": "not_found"}), None, False),
+        ((500, {"error": "boom"}), None, False),
+        ((200, b"not json"), None, False),
+        ((200, ["locked"]), None, False),
+    ],
+)
+def test_locked_remote(
+    couch: str, milestone: tuple[int, Any], node_id: str | None, locked: bool
+) -> None:
+    FakeCouch.routes = {"/my%2Fnotes/": DB, MILESTONE: milestone}
+    result = probe(couch, node_id=node_id).probe()
+    assert (result.ok, result.error, result.update_seq, result.locked) == (True, None, 5, locked)
+
+
+def test_milestone_is_not_a_checkpoint_and_is_read_only(couch: str) -> None:
+    FakeCouch.routes = {"/my%2Fnotes/": DB, MILESTONE: (200, {"locked": True})}
+    probe(couch).probe()
+    assert MILESTONE in FakeCouch.seen
+    assert all(path.startswith("/my%2Fnotes/") for path in FakeCouch.seen)

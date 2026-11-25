@@ -121,7 +121,7 @@ class Tracker:
     def probed(self, probe: Probe) -> None:
         at = status.now_iso(self.now())
         remote, replication = self.doc["remote"], self.doc["replication"]
-        remote.update(ok=probe.ok, checked_at=at, error=probe.error)
+        remote.update(ok=probe.ok, checked_at=at, error=probe.error, locked=probe.locked)
         if not probe.ok:
             return
         remote.update(last_ok_at=at, update_seq=probe.update_seq, retry_at=None)

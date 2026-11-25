@@ -205,3 +205,19 @@ def test_parse_time() -> None:
     assert status.parse_time("2026-11-08T12:00:00Z") == NOW
     assert status.parse_time("2026-13-08T12:00:00Z") is None
     assert status.parse_time(5) is None
+
+
+def test_remote_locked_is_a_problem() -> None:
+    doc = healthy_doc()
+    doc["remote"]["locked"] = True
+    health = status.evaluate(doc, NOW)
+    assert health["healthy"] is False
+    assert health["problems"] == ["remote_locked"]
+
+
+def test_remote_not_locked_or_old_status_file() -> None:
+    doc = healthy_doc()
+    doc["remote"]["locked"] = False
+    assert status.evaluate(doc, NOW)["problems"] == []
+    del doc["remote"]["locked"]
+    assert status.evaluate(doc, NOW)["problems"] == []
