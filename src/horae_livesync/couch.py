@@ -8,7 +8,15 @@ PouchDB one (an integer), so the pending count is the database's sequence number
 highest string checkpoint. CouchDB sequence numbers are only roughly ordered on a cluster;
 the count is an estimate, exact on a single node.
 
-No ambient proxy, no redirect, at most 1 MiB per answer. Errors are classes
+No ambient proxy, no redirect, at most 1 MiB per answer.
+
+The milestone document `_local/obsydian_livesync_milestone` (LiveSync's own spelling) is read
+too: `locked: true` means a client rebuilt the remote and only the nodes in `accepted_nodes`
+may replicate. The plugin cannot know the CLI's own node id (LiveSync generates it and the
+CLI never logs it), so a locked remote is reported as `Probe.locked` whenever no `node_id` is
+given; a missing document (404), or one that cannot be read, is not a lock.
+
+Errors are classes
 (`unauthorized`, `forbidden`, `database_missing`, `http_<code>`, `tls_error`, `timeout`,
 `unreachable`, `bad_response`), never a message from the server, and `probe` never raises.
 
@@ -29,6 +37,7 @@ from urllib.request import HTTPRedirectHandler, OpenerDirector, ProxyHandler, Re
 MAX_RESPONSE_BYTES = 1024 * 1024
 USER_AGENT = "horae-livesync (+https://github.com/horae-dev/plugin-livesync)"
 AUTH_ERRORS = frozenset({"unauthorized", "forbidden"})
+MILESTONE_ID = "obsydian_livesync_milestone"
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -42,6 +51,7 @@ class Probe:
     error: str | None = None
     update_seq: int | None = None
     checkpoint_seq: int | None = None
+    locked: bool = False
 
 
 def seq_number(value: object) -> int | None:
@@ -66,7 +76,9 @@ class CouchProbe:
         password: str,
         timeout_s: float = 10,
         opener: OpenerDirector | None = None,
+        node_id: str | None = None,
     ) -> None:
+        self._node_id = node_id
         self._base = f"{url.rstrip('/')}/{quote(database, safe='')}"
         token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
         self._headers = {
@@ -101,7 +113,7 @@ class CouchProbe:
                 seq = self._checkpoint(local_id)
                 if seq is not None and (checkpoint is None or seq > checkpoint):
                     checkpoint = seq
-            return Probe(True, None, seq_number(info.get("update_seq")), checkpoint)
+            return Probe(True, None, seq_number(info.get("update_seq")), checkpoint, self._locked())
         except HTTPError as exc:
             code = exc.code
             exc.close()
@@ -119,6 +131,19 @@ class CouchProbe:
             # Anything else (a truncated answer, `http.client.IncompleteRead`, bad JSON, a
             # protocol error) is a bad response: the probe never raises.
             return Probe(False, "bad_response")
+
+    def _locked(self) -> bool:
+        """The remote is locked and this node is not accepted (read-only; any failure: no)."""
+        try:
+            doc = self._get(f"/_local/{MILESTONE_ID}")
+        except Exception:
+            return False
+        if not isinstance(doc, dict) or doc.get("locked") is not True:
+            return False
+        accepted = doc.get("accepted_nodes")
+        if self._node_id is None or not isinstance(accepted, list):
+            return True
+        return self._node_id not in accepted
 
     def _checkpoint(self, local_id: str) -> int | None:
         """The pull checkpoint's sequence, or None (missing, or a push checkpoint)."""

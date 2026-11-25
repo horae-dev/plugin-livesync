@@ -178,6 +178,7 @@ health. **healthy** when none of these `problems` holds:
 | `status_stale` | Older than `max_age_s`, or more than 60 s in the future (a skewed clock). |
 | `config_error`, `not_live` | The configuration was refused; the CLI is not live (starting, exited, `auth_failed`). |
 | the probe's error | `unauthorized`, `forbidden`, `timeout`, `unreachable`... (`remote_unreachable` before the first probe). |
+| `remote_locked` | The remote was rebuilt from an Obsidian client (milestone `locked: true`) and does not accept the CLI. Unlock it from Obsidian (LiveSync settings, Maintenance: the "unlock"/"resolve" action; see [setup](docs/setup.md#4-first-sync-from-an-empty-vault)). The sidecar cannot know the CLI's node id, so it reports this whenever the remote is locked. |
 | the CLI's error | `initial_replication_failed`, `unreachable`, `server_error`... when the CLI's last failure is newer than its last success and has lasted more than one probe interval (at once when the CLI is not live); before that, the warning `replication_retrying`. |
 | `lagging` | Changes pending and the checkpoint has not moved for `max_lag_s`. |
 | `lag_unknown` | The lag cannot be measured (the CLI's log changed) more than 3 probe intervals after the sidecar's start; a warning before. |

@@ -438,3 +438,11 @@ def test_a_disabled_snapshot_never_runs(tmp_path: Path, secrets_dir: Path) -> No
     assert sup.tracker.doc["snapshot"]["enabled"] is False
     sup._snapshot_if_due()
     assert sup._snapshot_thread is None
+
+
+def test_tracker_records_a_locked_remote() -> None:
+    tracker = Tracker("v", now=lambda: datetime(2026, 11, 8, tzinfo=UTC))
+    tracker.probed(Probe(True, None, 10, 7, locked=True))
+    assert tracker.doc["remote"]["locked"] is True
+    tracker.probed(Probe(True, None, 10, 7))
+    assert tracker.doc["remote"]["locked"] is False

@@ -15,6 +15,8 @@ call `evaluate`. Schema (version 1), times as UTC ISO 8601 strings or null:
     process.log_reader_error    the sidecar stopped reading the CLI's output (an error class)
     remote.ok               the last probe of the CouchDB database succeeded (null: not yet)
     remote.checked_at, last_ok_at, error, update_seq (numeric part of the database update_seq)
+    remote.locked           the remote was rebuilt from an Obsidian client and the CLI is not
+                            accepted (milestone `locked`; absent in older files = false)
     remote.retry_at         credentials refused: when they are tried again (null otherwise)
     replication.last_ok_at  last successful replication request of the CLI
     replication.last_error_at, last_error
@@ -96,6 +98,7 @@ def new_status(
             "last_ok_at": None,
             "error": None,
             "update_seq": None,
+            "locked": False,
             "retry_at": None,
         },
         "replication": {
@@ -208,6 +211,8 @@ def evaluate(
     - `status_missing`, `status_invalid`, `status_stale` (older than `max_age_s`, or more than
       60 s in the future), `config_error`, `not_live`;
     - the probe's error (`unauthorized`, `forbidden`, `timeout`...) or `remote_unreachable`;
+    - `remote_locked`: the remote is locked by a rebuild and does not accept the CLI (unlock it
+      from an Obsidian client);
     - the CLI's replication error (`initial_replication_failed`, `unreachable`...) when it is
       newer than its last success and has lasted more than one probe interval (at once when
       the CLI is not live), else the warning `replication_retrying`;
@@ -254,6 +259,8 @@ def evaluate(
         problem("not_live")
     if remote.get("ok") is not True:
         problem(_word(remote.get("error"), 32) or "remote_unreachable")
+    if remote.get("ok") is True and remote.get("locked") is True:
+        problem("remote_locked")
     if process.get("log_reader_error") is not None:
         problem("log_reader_failed")
 

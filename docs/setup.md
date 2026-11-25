@@ -259,7 +259,15 @@ The image's HEALTHCHECK allows 5 minutes for the first fetch; for a large vault 
    in both directions by the startup scan, which is fine but harder to reason about.
 2. Order: CouchDB up and database created, the desktop synced once (so the database holds your
    vault), then the sidecar, then the phone.
-3. Watch `state` move to `live` and `files_in` grow (`horae-livesync health --json` in the
+3. If the remote is **locked** (you rebuilt it from Obsidian: the milestone document
+   `_local/obsydian_livesync_milestone` has `locked: true` and `accepted_nodes` lists only your
+   Obsidian devices), the CLI cannot replicate: it logs only `Initial replication failed` and
+   exits, and the health says `remote_locked`. Unlock the remote from an Obsidian client:
+   LiveSync settings, Maintenance, then the "unlock"/"resolve" action for the remote database
+   (Obsidian prompts for it when it detects the lock). The sidecar then recovers by itself. The
+   sidecar only reads the document and cannot know the CLI's node id, so it reports
+   `remote_locked` whenever the remote is locked.
+4. Watch `state` move to `live` and `files_in` grow (`horae-livesync health --json` in the
    container, or the `livesync.status` source).
 
 Checklist:
@@ -399,6 +407,7 @@ plan to rehearse on a copy first.
 | `state: auth_failed`, problem `unauthorized` or `forbidden` | Wrong password or user lacks admin on the database. Fix, then wait the retry window or restart. |
 | `database_missing` | The database `obsidian` does not exist yet: create it (step 1.5). |
 | `tls_error` | The certificate is not from a public CA ([TLS](../README.md#tls)). |
+| `remote_locked` (with `initial_replication_failed` in the log) | The remote was rebuilt from Obsidian and is locked. Unlock it from an Obsidian client (LiveSync "unlock"/"resolve"); see step 4.3. |
 | `initial_replication_failed` on a big vault | Wait; raise `start_period`; check proxy size limits and buffering. |
 | Files appear garbled, or never appear | Passphrase, path obfuscation or a parity setting differs from the clients (step 2). |
 | `check` refuses `settings` | A key outside the allowlist; remove it. |
